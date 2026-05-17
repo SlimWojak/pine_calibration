@@ -1,0 +1,58 @@
+# Rule contract template — pine_calibration → en1gma port
+#
+# When a slice is locked in Pine (Olya signs off), capture the locked rule
+# here BEFORE writing the Python port. The Python implementation must match
+# this contract byte-for-byte at the typed-output layer.
+#
+# This file is the actual handoff artifact between the Pine sandbox and en1gma.
+# The signal-diff in diffs/ comes AFTER this contract exists.
+
+rule_name: example_rule_name
+locked_date: YYYY-MM-DD
+locked_by: G + Olya
+fixture: fixtures/YYYY-MM-DD_slug.md
+status: DRAFT | LOCKED | PORTED
+
+# --- methodology anchor ---
+methodology_source:
+  vlock_ref: en1gma/methodology/SYNTHETIC_OLYA_METHOD_vLOCK.yaml#<section>
+  baseline_ref: en1gma/docs/reviews/PHASE_5_C2_DAILY_LED_HTF_MAP_V1_METHODOLOGY_BASELINE_RATIFIED_2026_05_05.md
+  spec_section: <Q1 | Q2 | ...>
+
+# --- inputs (mirror locked_baseline.yaml verbatim — do NOT retune here) ---
+locked_baseline_inputs:
+  primitive: <swing_points | displacement | mss | ...>
+  params:
+    # paste verbatim from en1gma/console/detection/locked_baseline.yaml
+    # do NOT introduce new params or re-tune existing ones in this lab
+    param_a: value
+    param_b: value
+
+# --- the rule under calibration ---
+rule:
+  description: |
+    One-paragraph plain-English statement of what the rule decides.
+  inputs:
+    - <typed field from upstream primitive>
+  decision_modes_considered:
+    A: <mode A description>
+    B: <mode B description>
+    C: <mode C description>
+  selected_mode: <A | B | C>
+  selection_evidence: |
+    What Olya saw on the chart that made her pick this mode.
+    Reference screenshot path.
+
+# --- typed output ---
+emits:
+  - field_name: type (enum values if applicable)
+
+# --- python port contract ---
+python_port:
+  target_module: en1gma/console/map/<file>.py
+  target_class_or_function: <name>
+  signal_diff_path: diffs/<rule_name>_signal_diff.csv
+  parity_check: |
+    Pine and Python must emit identical events on the same FX:EURUSD Daily
+    bars across the window listed in `fixture`. Any divergence is a bug
+    in exactly one of them.

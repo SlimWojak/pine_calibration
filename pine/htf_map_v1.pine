@@ -1,0 +1,89 @@
+//@version=6
+// =============================================================================
+// htf_map_v1 — pine_calibration sandbox
+// =============================================================================
+// Visual calibration of the en1gma HTF MAP algorithm on FX:EURUSD Daily.
+// Source of truth: en1gma/console/detection/locked_baseline.yaml + vLOCK.yaml.
+// CODE WINS in conflicts (per en1gma/docs/canonical/DETECTION_PRIMITIVES_INDEX.md).
+//
+// Slice scope (initial):
+//   - Mirror Daily swing_points, displacement, mss detectors
+//   - State: Map Direction + Delivery Failure event
+//   - Toggle: 3-mode direction-flip rule (DF / REPLACEMENT / HYBRID)
+//   - Fixture: fixtures/2026-03-02_bearish_flip.md
+//
+// What this file is NOT (yet):
+//   - It does not implement any logic. This commit ships only the locked-param
+//     constants block transcribed from locked_baseline.yaml, so the next session
+//     writes the algorithm on top of a verified-faithful parameter scaffold.
+// =============================================================================
+
+indicator("HTF MAP V1 — calibration sandbox", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
+
+// =============================================================================
+// LOCKED PARAMETERS — transcribed verbatim from
+//   en1gma/console/detection/locked_baseline.yaml
+// Daily timeframe only. Do NOT retune in this lab — retuning happens in en1gma.
+// Any divergence here is a bug in the transcription.
+// =============================================================================
+
+// --- swing_points (status: LOCKED; Daily params PROPOSED pending Olya) ----
+// detector: en1gma/console/detection/ra_engine/detectors/swing_points.py
+SWING_N_DAILY              = 2          // fractal N (left=right=N)
+SWING_HEIGHT_FILTER_PIPS_D = 15.0       // min wick height in pips for swing validity
+SWING_STRENGTH_CAP         = 20         // strength tag clamp (not a gate)
+SWING_STRENGTH_AS_GATE     = false      // strength is tag-only, never a filter
+
+// --- displacement (status: LOCKED) ----------------------------------------
+// detector: en1gma/console/detection/ra_engine/detectors/displacement.py
+// emits quality_grade ∈ {STRONG, VALID, WEAK, null}
+DISP_HTF_ATR_MULT          = 1.50       // candle range >= ATR * 1.50
+DISP_HTF_BODY_RATIO        = 0.65       // body/range >= 0.65
+DISP_HTF_CLOSE_GATE        = 0.25       // close location within top/bottom 25%
+DISP_HTF_STRUCT_CLOSE_REQ  = true       // close must be beyond structure level
+DISP_DECISIVE_BODY_MIN     = 0.75       // decisive_override.body_min
+DISP_DECISIVE_CLOSE_MAX    = 0.10       // decisive_override.close_max
+DISP_CLUSTER_2_ENABLED     = true       // 2-bar cluster qualification path
+DISP_NET_EFFICIENCY_MIN    = 0.65       // for cluster qualification
+DISP_COMBINATION_MODE      = "AND"      // ATR AND body (not OR)
+
+// --- mss (status: LOCKED) --------------------------------------------------
+// detector: en1gma/console/detection/ra_engine/detectors/mss.py
+// HTF rules (1H/4H/1D all share these flags per locked_baseline.yaml)
+MSS_HTF_DISPLACEMENT_REQ   = true       // MSS requires concurrent displacement
+MSS_HTF_CLOSE_BEYOND_SWING = true       // candle close must clear swing price
+MSS_HTF_STRUCT_CLOSE_REQ   = true       // structure-close-required (same as disp)
+MSS_HTF_CONFIRM_WINDOW_BARS = 1         // 1-bar confirmation window
+MSS_FVG_TAG_ONLY           = true       // FVG tagged when present; NOT required
+MSS_SWING_CONSUMPTION      = true       // consumed swing cannot trigger again
+
+// --- shared constants ------------------------------------------------------
+PIP_VALUE                  = 0.0001     // EUR/USD pip
+
+// =============================================================================
+// CALIBRATION INPUTS (UI toggles)
+// =============================================================================
+
+// 3-mode direction-flip rule under calibration — see PIVOTAL_003 fixture card.
+// A: opposite-MSS+disp before First Draw → Delivery Failure (no flip; daily_state→REASSESSMENT)
+// B: opposite-MSS+disp → immediate Map Direction flip + new range birth (no DF)
+// C: hybrid → DF event AND direction flip simultaneously
+i_flip_mode = input.string("A_DELIVERY_FAILURE", "Direction-flip rule mode", options=["A_DELIVERY_FAILURE", "B_REPLACEMENT", "C_HYBRID"], tooltip="See fixtures/2026-03-02_bearish_flip.md — this is the open methodology question for Olya to adjudicate visually.")
+
+// =============================================================================
+// ALGORITHM — TBD next session
+// =============================================================================
+// Next iteration writes:
+//   1) daily_swing_points() — fractal-N pivots with height filter
+//   2) daily_displacement() — ATR+body grading → quality_grade
+//   3) daily_mss()          — swing-break with displacement gate
+//   4) Map Direction state machine (consumes daily_mss events)
+//   5) Delivery Failure event detector (per i_flip_mode)
+//   6) Visual overlays: direction label, DF marker, range box, current_extreme line
+//
+// First target fixture: fixtures/2026-03-02_bearish_flip.md
+//
+// Workflow per iteration (per CLAUDE.md):
+//   look up Pine via pinescript-docs MCP → write/edit → inject+compile via
+//   tradingview MCP → apply to chart → bar-replay → screenshot → annotate
+//   scorecard.md → tune.
