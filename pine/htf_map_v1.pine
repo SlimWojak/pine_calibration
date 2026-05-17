@@ -6,84 +6,238 @@
 // Source of truth: en1gma/console/detection/locked_baseline.yaml + vLOCK.yaml.
 // CODE WINS in conflicts (per en1gma/docs/canonical/DETECTION_PRIMITIVES_INDEX.md).
 //
-// Slice scope (initial):
-//   - Mirror Daily swing_points, displacement, mss detectors
-//   - State: Map Direction + Delivery Failure event
-//   - Toggle: 3-mode direction-flip rule (DF / REPLACEMENT / HYBRID)
-//   - Fixture: fixtures/2026-03-02_bearish_flip.md
+// Slice scope:
+//   [x] Daily swing_points  (fractal-N=2 + 15-pip height filter)
+//   [x] Daily displacement  (ATR + body + close-gate + decisive_override + cluster_2)
+//   [x] Daily mss           (swing-break with displacement gate + swing consumption)
+//   [x] Map Direction state + Delivery Failure event
+//   [x] 3-mode direction-flip toggle (DF / REPLACEMENT / HYBRID)
 //
-// What this file is NOT (yet):
-//   - It does not implement any logic. This commit ships only the locked-param
-//     constants block transcribed from locked_baseline.yaml, so the next session
-//     writes the algorithm on top of a verified-faithful parameter scaffold.
+// Fixture: fixtures/2026-03-02_bearish_flip.md
 // =============================================================================
 
 indicator("HTF MAP V1 — calibration sandbox", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
 
-// =============================================================================
-// LOCKED PARAMETERS — transcribed verbatim from
-//   en1gma/console/detection/locked_baseline.yaml
-// Daily timeframe only. Do NOT retune in this lab — retuning happens in en1gma.
-// Any divergence here is a bug in the transcription.
-// =============================================================================
+// --- locked params (Daily) — verbatim from en1gma locked_baseline.yaml ---
+SWING_N_DAILY              = 2
+SWING_HEIGHT_FILTER_PIPS_D = 15.0
 
-// --- swing_points (status: LOCKED; Daily params PROPOSED pending Olya) ----
-// detector: en1gma/console/detection/ra_engine/detectors/swing_points.py
-SWING_N_DAILY              = 2          // fractal N (left=right=N)
-SWING_HEIGHT_FILTER_PIPS_D = 15.0       // min wick height in pips for swing validity
-SWING_STRENGTH_CAP         = 20         // strength tag clamp (not a gate)
-SWING_STRENGTH_AS_GATE     = false      // strength is tag-only, never a filter
+DISP_HTF_ATR_MULT          = 1.50
+DISP_HTF_BODY_RATIO        = 0.65
+DISP_HTF_CLOSE_GATE        = 0.25
+DISP_DECISIVE_BODY_MIN     = 0.75
+DISP_DECISIVE_CLOSE_MAX    = 0.10
+DISP_NET_EFFICIENCY_MIN    = 0.65
 
-// --- displacement (status: LOCKED) ----------------------------------------
-// detector: en1gma/console/detection/ra_engine/detectors/displacement.py
-// emits quality_grade ∈ {STRONG, VALID, WEAK, null}
-DISP_HTF_ATR_MULT          = 1.50       // candle range >= ATR * 1.50
-DISP_HTF_BODY_RATIO        = 0.65       // body/range >= 0.65
-DISP_HTF_CLOSE_GATE        = 0.25       // close location within top/bottom 25%
-DISP_HTF_STRUCT_CLOSE_REQ  = true       // close must be beyond structure level
-DISP_DECISIVE_BODY_MIN     = 0.75       // decisive_override.body_min
-DISP_DECISIVE_CLOSE_MAX    = 0.10       // decisive_override.close_max
-DISP_CLUSTER_2_ENABLED     = true       // 2-bar cluster qualification path
-DISP_NET_EFFICIENCY_MIN    = 0.65       // for cluster qualification
-DISP_COMBINATION_MODE      = "AND"      // ATR AND body (not OR)
+MSS_HTF_CONFIRM_WINDOW_BARS = 1
 
-// --- mss (status: LOCKED) --------------------------------------------------
-// detector: en1gma/console/detection/ra_engine/detectors/mss.py
-// HTF rules (1H/4H/1D all share these flags per locked_baseline.yaml)
-MSS_HTF_DISPLACEMENT_REQ   = true       // MSS requires concurrent displacement
-MSS_HTF_CLOSE_BEYOND_SWING = true       // candle close must clear swing price
-MSS_HTF_STRUCT_CLOSE_REQ   = true       // structure-close-required (same as disp)
-MSS_HTF_CONFIRM_WINDOW_BARS = 1         // 1-bar confirmation window
-MSS_FVG_TAG_ONLY           = true       // FVG tagged when present; NOT required
-MSS_SWING_CONSUMPTION      = true       // consumed swing cannot trigger again
+PIP_VALUE = 0.0001
 
-// --- shared constants ------------------------------------------------------
-PIP_VALUE                  = 0.0001     // EUR/USD pip
+// --- inputs ---
+i_flip_mode         = input.string("B_REPLACEMENT", "Direction-flip rule mode", options=["A_DELIVERY_FAILURE", "B_REPLACEMENT", "C_HYBRID"], group="Calibration", tooltip="A: opposite MSS → DF event, no direction flip. B: opposite MSS → immediate direction flip. C: hybrid → DF event AND direction flip.")
+i_show_swings       = input.bool(true, "Show swing points",  group="Debug overlays")
+i_show_displacement = input.bool(true, "Show displacement",  group="Debug overlays")
+i_show_mss          = input.bool(true, "Show MSS",           group="Debug overlays")
+i_show_direction    = input.bool(true, "Show Map Direction tint", group="Map overlays")
+i_show_df_events    = input.bool(true, "Show DF events",     group="Map overlays")
+i_atr_length        = input.int(14,    "ATR length",         group="Calibration", minval=1)
 
 // =============================================================================
-// CALIBRATION INPUTS (UI toggles)
+// swing_points (Daily)
 // =============================================================================
+ph_raw = ta.pivothigh(SWING_N_DAILY, SWING_N_DAILY)
+pl_raw = ta.pivotlow(SWING_N_DAILY, SWING_N_DAILY)
 
-// 3-mode direction-flip rule under calibration — see PIVOTAL_003 fixture card.
-// A: opposite-MSS+disp before First Draw → Delivery Failure (no flip; daily_state→REASSESSMENT)
-// B: opposite-MSS+disp → immediate Map Direction flip + new range birth (no DF)
-// C: hybrid → DF event AND direction flip simultaneously
-i_flip_mode = input.string("A_DELIVERY_FAILURE", "Direction-flip rule mode", options=["A_DELIVERY_FAILURE", "B_REPLACEMENT", "C_HYBRID"], tooltip="See fixtures/2026-03-02_bearish_flip.md — this is the open methodology question for Olya to adjudicate visually.")
+f_max_neighbor_high(int N) =>
+    float m = na
+    for i = 0 to N * 2
+        if i != N
+            v = high[i]
+            m := na(m) ? v : math.max(m, v)
+    m
+
+f_min_neighbor_low(int N) =>
+    float m = na
+    for i = 0 to N * 2
+        if i != N
+            v = low[i]
+            m := na(m) ? v : math.min(m, v)
+    m
+
+ph_height_pips = not na(ph_raw) ? (ph_raw - f_max_neighbor_high(SWING_N_DAILY)) / PIP_VALUE : na
+pl_height_pips = not na(pl_raw) ? (f_min_neighbor_low(SWING_N_DAILY) - pl_raw) / PIP_VALUE : na
+
+ph_valid = not na(ph_raw) and ph_height_pips >= SWING_HEIGHT_FILTER_PIPS_D
+pl_valid = not na(pl_raw) and pl_height_pips >= SWING_HEIGHT_FILTER_PIPS_D
+
+plot_ph = (ph_valid and i_show_swings) ? ph_raw : na
+plot_pl = (pl_valid and i_show_swings) ? pl_raw : na
+
+plot(plot_ph, title="Daily SH", style=plot.style_cross, linewidth=3, color=color.red,   offset=-SWING_N_DAILY)
+plot(plot_pl, title="Daily SL", style=plot.style_cross, linewidth=3, color=color.green, offset=-SWING_N_DAILY)
 
 // =============================================================================
-// ALGORITHM — TBD next session
+// displacement (Daily)
 // =============================================================================
-// Next iteration writes:
-//   1) daily_swing_points() — fractal-N pivots with height filter
-//   2) daily_displacement() — ATR+body grading → quality_grade
-//   3) daily_mss()          — swing-break with displacement gate
-//   4) Map Direction state machine (consumes daily_mss events)
-//   5) Delivery Failure event detector (per i_flip_mode)
-//   6) Visual overlays: direction label, DF marker, range box, current_extreme line
+candle_range = high - low
+candle_body  = math.abs(close - open)
+body_ratio   = candle_range > 0 ? candle_body / candle_range : 0.0
+atr_val      = ta.atr(i_atr_length)
+atr_ratio    = atr_val > 0 ? candle_range / atr_val : 0.0
+
+is_bull_bar  = close > open
+is_bear_bar  = close < open
+
+close_loc    = candle_range > 0 ? (close - low) / candle_range : 0.5
+
+decisive_bull = is_bull_bar and body_ratio >= DISP_DECISIVE_BODY_MIN and close_loc >= (1 - DISP_DECISIVE_CLOSE_MAX)
+decisive_bear = is_bear_bar and body_ratio >= DISP_DECISIVE_BODY_MIN and close_loc <= DISP_DECISIVE_CLOSE_MAX
+
+single_atr_bull = is_bull_bar and atr_ratio >= DISP_HTF_ATR_MULT and body_ratio >= DISP_HTF_BODY_RATIO and close_loc >= (1 - DISP_HTF_CLOSE_GATE)
+single_atr_bear = is_bear_bar and atr_ratio >= DISP_HTF_ATR_MULT and body_ratio >= DISP_HTF_BODY_RATIO and close_loc <= DISP_HTF_CLOSE_GATE
+
+two_bar_high   = math.max(high, high[1])
+two_bar_low    = math.min(low, low[1])
+two_bar_range  = two_bar_high - two_bar_low
+two_bar_net    = math.abs(close - open[1])
+two_bar_eff    = two_bar_range > 0 ? two_bar_net / two_bar_range : 0.0
+two_bar_atr_r  = atr_val > 0 ? two_bar_range / atr_val : 0.0
+same_dir_bull  = close > open and close[1] > open[1]
+same_dir_bear  = close < open and close[1] < open[1]
+
+single_path_bull = decisive_bull or single_atr_bull
+single_path_bear = decisive_bear or single_atr_bear
+prior_single_bull = decisive_bull[1] or single_atr_bull[1]
+prior_single_bear = decisive_bear[1] or single_atr_bear[1]
+
+cluster_bull = same_dir_bull and two_bar_atr_r >= DISP_HTF_ATR_MULT and two_bar_eff >= DISP_NET_EFFICIENCY_MIN and not single_path_bull and not prior_single_bull
+cluster_bear = same_dir_bear and two_bar_atr_r >= DISP_HTF_ATR_MULT and two_bar_eff >= DISP_NET_EFFICIENCY_MIN and not single_path_bear and not prior_single_bear
+
+qg_strong = decisive_bull or decisive_bear
+qg_valid  = (not qg_strong) and (single_atr_bull or single_atr_bear or cluster_bull or cluster_bear)
+
+disp_dir  = (decisive_bull or single_atr_bull or cluster_bull) ? 1 : (decisive_bear or single_atr_bear or cluster_bear) ? -1 : 0
+
+quality_grade = qg_strong ? "STRONG" : qg_valid ? "VALID" : ""
+
+plotshape(i_show_displacement and qg_strong and disp_dir > 0, title="Disp STRONG bull", style=shape.diamond, location=location.belowbar, color=color.yellow, size=size.tiny)
+plotshape(i_show_displacement and qg_strong and disp_dir < 0, title="Disp STRONG bear", style=shape.diamond, location=location.abovebar, color=color.yellow, size=size.tiny)
+plotshape(i_show_displacement and qg_valid  and disp_dir > 0, title="Disp VALID bull",  style=shape.circle,  location=location.belowbar, color=color.aqua,   size=size.tiny)
+plotshape(i_show_displacement and qg_valid  and disp_dir < 0, title="Disp VALID bear",  style=shape.circle,  location=location.abovebar, color=color.aqua,   size=size.tiny)
+
+// =============================================================================
+// mss (Daily) — consumes displacement + swings, emits MSS up/dn events
+// =============================================================================
+var array<float> unc_sh_price = array.new<float>()
+var array<int>   unc_sh_bar   = array.new<int>()
+var array<float> unc_sl_price = array.new<float>()
+var array<int>   unc_sl_bar   = array.new<int>()
+
+if ph_valid
+    array.push(unc_sh_price, ph_raw)
+    array.push(unc_sh_bar,   bar_index - SWING_N_DAILY)
+if pl_valid
+    array.push(unc_sl_price, pl_raw)
+    array.push(unc_sl_bar,   bar_index - SWING_N_DAILY)
+
+disp_bull_now  = (qg_strong or qg_valid) and disp_dir > 0
+disp_bear_now  = (qg_strong or qg_valid) and disp_dir < 0
+mss_bull_disp_ok = disp_bull_now or disp_bull_now[1]
+mss_bear_disp_ok = disp_bear_now or disp_bear_now[1]
+
+bool  mss_bull_fired  = false
+bool  mss_bear_fired  = false
+float mss_bull_swing  = na
+float mss_bear_swing  = na
+int   mss_bull_swing_bar = na
+int   mss_bear_swing_bar = na
+
+if mss_bull_disp_ok
+    int i = 0
+    while i < array.size(unc_sh_price)
+        sh = array.get(unc_sh_price, i)
+        if close > sh
+            sh_bar_idx = array.get(unc_sh_bar, i)
+            mss_bull_fired := true
+            mss_bull_swing := sh
+            mss_bull_swing_bar := sh_bar_idx
+            if i_show_mss
+                line.new(chart.point.from_index(sh_bar_idx, sh), chart.point.from_index(bar_index, sh), color=color.new(color.lime, 0), width=2, extend=extend.none)
+                label.new(chart.point.from_index(bar_index, high), text="MSS up", style=label.style_label_down, color=color.new(color.lime, 0), textcolor=color.black, size=size.small)
+            array.remove(unc_sh_price, i)
+            array.remove(unc_sh_bar,   i)
+        else
+            i := i + 1
+
+if mss_bear_disp_ok
+    int j = 0
+    while j < array.size(unc_sl_price)
+        sl = array.get(unc_sl_price, j)
+        if close < sl
+            sl_bar_idx = array.get(unc_sl_bar, j)
+            mss_bear_fired := true
+            mss_bear_swing := sl
+            mss_bear_swing_bar := sl_bar_idx
+            if i_show_mss
+                line.new(chart.point.from_index(sl_bar_idx, sl), chart.point.from_index(bar_index, sl), color=color.new(color.red, 0), width=2, extend=extend.none)
+                label.new(chart.point.from_index(bar_index, low), text="MSS dn", style=label.style_label_up, color=color.new(color.red, 0), textcolor=color.white, size=size.small)
+            array.remove(unc_sl_price, j)
+            array.remove(unc_sl_bar,   j)
+        else
+            j := j + 1
+
+// =============================================================================
+// MAP STATE — direction + delivery failure under 3-mode toggle
+// =============================================================================
+// State carried across bars: map_direction ∈ {-1, 0, 1}
 //
-// First target fixture: fixtures/2026-03-02_bearish_flip.md
-//
-// Workflow per iteration (per CLAUDE.md):
-//   look up Pine via pinescript-docs MCP → write/edit → inject+compile via
-//   tradingview MCP → apply to chart → bar-replay → screenshot → annotate
-//   scorecard.md → tune.
+// Behavior per i_flip_mode when an MSS fires in the OPPOSITE direction to
+// current map_direction:
+//   A_DELIVERY_FAILURE : emit DF event, direction stays put
+//   B_REPLACEMENT      : direction flips, no DF event
+//   C_HYBRID           : emit DF event AND direction flips
+// On initial MSS (map_direction == 0) or same-direction MSS, direction
+// is simply set/reaffirmed — never a DF event.
+
+var int map_direction = 0
+var int range_birth_bar = na
+
+// MSS bull handling
+if mss_bull_fired
+    opposite = map_direction == -1
+    fire_df  = opposite and (i_flip_mode == "A_DELIVERY_FAILURE" or i_flip_mode == "C_HYBRID")
+    do_flip  = (not opposite) or (i_flip_mode == "B_REPLACEMENT") or (i_flip_mode == "C_HYBRID")
+
+    if fire_df and i_show_df_events
+        label.new(chart.point.from_index(bar_index, low - candle_range * 0.5), text="DF↑", style=label.style_label_up, color=color.new(color.orange, 0), textcolor=color.black, size=size.normal)
+
+    if do_flip
+        map_direction := 1
+        range_birth_bar := bar_index
+
+// MSS bear handling
+if mss_bear_fired
+    opposite = map_direction == 1
+    fire_df  = opposite and (i_flip_mode == "A_DELIVERY_FAILURE" or i_flip_mode == "C_HYBRID")
+    do_flip  = (not opposite) or (i_flip_mode == "B_REPLACEMENT") or (i_flip_mode == "C_HYBRID")
+
+    if fire_df and i_show_df_events
+        label.new(chart.point.from_index(bar_index, high + candle_range * 0.5), text="DF↓", style=label.style_label_down, color=color.new(color.orange, 0), textcolor=color.black, size=size.normal)
+
+    if do_flip
+        map_direction := -1
+        range_birth_bar := bar_index
+
+// Background tint = current map_direction (lets you read direction off any bar)
+dir_bg = map_direction == 1 ? color.new(color.green, 92) : map_direction == -1 ? color.new(color.red, 92) : na
+bgcolor(i_show_direction ? dir_bg : na, title="Map Direction tint")
+
+// Top-right badge showing current state (single sticky label that updates each bar)
+var label badge = na
+if barstate.islast
+    txt = "Map Direction: " + (map_direction == 1 ? "BULL ▲" : map_direction == -1 ? "BEAR ▼" : "—") + "  |  Mode: " + i_flip_mode
+    if na(badge)
+        badge := label.new(chart.point.from_index(bar_index, high), text=txt, style=label.style_label_left, color=color.new(color.black, 20), textcolor=color.white, size=size.normal)
+    else
+        label.set_xy(badge, bar_index, high)
+        label.set_text(badge, txt)

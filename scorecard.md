@@ -6,7 +6,7 @@ When all rows are PASS and the corresponding `port/*.yaml` rule contracts are si
 
 | Fixture | What should fire (Olya) | What Pine fires | Screenshot | Status |
 |---|---|---|---|---|
-| `2026-03-02_bearish_flip` | Direction flip + DF event + bearish range birth + active_extreme_low from 3 Mar | — | — | TODO |
+| `2026-03-02_bearish_flip` | Direction flip + DF event + bearish range birth + active_extreme_low from 3 Mar | **Mode A**: no flip, DF up only (stuck bear). **Mode B**: flip on first SL break after bull phase (mid-Mar, not 2 Mar), no DF. **Mode C**: flip + DF dn on same bar (mid-Mar). | `iter4_mode_A.png`, `iter4_mode_B.png`, `iter4_mode_C.png` | PARTIAL — modes built; needs Olya verdict on date + mode |
 | `2025-12-10_range_birth` | (fill from review pack) | — | — | TODO |
 | `2026-01-22_range_succession` | (fill from review pack) | — | — | TODO |
 | `2025-12-24_target_reassess` | (fill from review pack) | — | — | TODO |
@@ -16,4 +16,4 @@ When all rows are PASS and the corresponding `port/*.yaml` rule contracts are si
 
 | Rule | Modes considered | Olya-selected mode | Locked in `port/` |
 |---|---|---|---|
-| Direction-flip rule (Mar 2) | A=Delivery Failure / B=Replacement / C=Hybrid | TBD | `port/direction_flip_rule.yaml` (not yet written) |
+| Direction-flip rule (Mar 2) | A=Delivery Failure / B=Replacement / C=Hybrid (built + visualized 2026-05-17) | TBD — pending Olya | `port/direction_flip_rule.yaml` (not yet written) |
