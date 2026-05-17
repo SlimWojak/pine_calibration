@@ -6,12 +6,13 @@
 // Source of truth: en1gma/console/detection/locked_baseline.yaml + vLOCK.yaml.
 // CODE WINS in conflicts (per en1gma/docs/canonical/DETECTION_PRIMITIVES_INDEX.md).
 //
-// Slice scope:
-//   [x] Daily swing_points  (fractal-N=2 + 15-pip height filter)
-//   [x] Daily displacement  (ATR + body + close-gate + decisive_override + cluster_2)
-//   [x] Daily mss           (swing-break with displacement gate + swing consumption)
+// Calibration slice (Mar 2 fixture):
+//   [x] Daily swing_points    (fractal-N=2 + 15-pip height filter)
+//   [x] Daily displacement    (ATR + body + close-gate + decisive_override + cluster_2)
+//   [x] Daily mss             (swing-break with displacement gate + swing consumption)
 //   [x] Map Direction state + Delivery Failure event
 //   [x] 3-mode direction-flip toggle (DF / REPLACEMENT / HYBRID)
+//   [x] Pivotal date markers + state-readout table
 //
 // Fixture: fixtures/2026-03-02_bearish_flip.md
 // =============================================================================
@@ -30,17 +31,18 @@ DISP_DECISIVE_CLOSE_MAX    = 0.10
 DISP_NET_EFFICIENCY_MIN    = 0.65
 
 MSS_HTF_CONFIRM_WINDOW_BARS = 1
-
 PIP_VALUE = 0.0001
 
 // --- inputs ---
-i_flip_mode         = input.string("B_REPLACEMENT", "Direction-flip rule mode", options=["A_DELIVERY_FAILURE", "B_REPLACEMENT", "C_HYBRID"], group="Calibration", tooltip="A: opposite MSS → DF event, no direction flip. B: opposite MSS → immediate direction flip. C: hybrid → DF event AND direction flip.")
-i_show_swings       = input.bool(true, "Show swing points",  group="Debug overlays")
-i_show_displacement = input.bool(true, "Show displacement",  group="Debug overlays")
-i_show_mss          = input.bool(true, "Show MSS",           group="Debug overlays")
-i_show_direction    = input.bool(true, "Show Map Direction tint", group="Map overlays")
-i_show_df_events    = input.bool(true, "Show DF events",     group="Map overlays")
-i_atr_length        = input.int(14,    "ATR length",         group="Calibration", minval=1)
+i_flip_mode         = input.string("C_HYBRID", "Direction-flip rule mode", options=["A_DELIVERY_FAILURE", "B_REPLACEMENT", "C_HYBRID"], group="Calibration")
+i_show_swings       = input.bool(true, "Show swing points",        group="Debug overlays")
+i_show_displacement = input.bool(true, "Show displacement",        group="Debug overlays")
+i_show_mss          = input.bool(true, "Show MSS",                 group="Debug overlays")
+i_show_direction    = input.bool(true, "Show Map Direction tint",  group="Map overlays")
+i_show_df_events    = input.bool(true, "Show DF events",           group="Map overlays")
+i_show_pivotal      = input.bool(true, "Show pivotal date markers", group="Map overlays")
+i_show_table        = input.bool(true, "Show state readout table",  group="Map overlays")
+i_atr_length        = input.int(14,    "ATR length",               group="Calibration", minval=1)
 
 // =============================================================================
 // swing_points (Daily)
@@ -87,7 +89,6 @@ atr_ratio    = atr_val > 0 ? candle_range / atr_val : 0.0
 
 is_bull_bar  = close > open
 is_bear_bar  = close < open
-
 close_loc    = candle_range > 0 ? (close - low) / candle_range : 0.5
 
 decisive_bull = is_bull_bar and body_ratio >= DISP_DECISIVE_BODY_MIN and close_loc >= (1 - DISP_DECISIVE_CLOSE_MAX)
@@ -117,7 +118,6 @@ qg_strong = decisive_bull or decisive_bear
 qg_valid  = (not qg_strong) and (single_atr_bull or single_atr_bear or cluster_bull or cluster_bear)
 
 disp_dir  = (decisive_bull or single_atr_bull or cluster_bull) ? 1 : (decisive_bear or single_atr_bear or cluster_bear) ? -1 : 0
-
 quality_grade = qg_strong ? "STRONG" : qg_valid ? "VALID" : ""
 
 plotshape(i_show_displacement and qg_strong and disp_dir > 0, title="Disp STRONG bull", style=shape.diamond, location=location.belowbar, color=color.yellow, size=size.tiny)
@@ -147,10 +147,6 @@ mss_bear_disp_ok = disp_bear_now or disp_bear_now[1]
 
 bool  mss_bull_fired  = false
 bool  mss_bear_fired  = false
-float mss_bull_swing  = na
-float mss_bear_swing  = na
-int   mss_bull_swing_bar = na
-int   mss_bear_swing_bar = na
 
 if mss_bull_disp_ok
     int i = 0
@@ -159,8 +155,6 @@ if mss_bull_disp_ok
         if close > sh
             sh_bar_idx = array.get(unc_sh_bar, i)
             mss_bull_fired := true
-            mss_bull_swing := sh
-            mss_bull_swing_bar := sh_bar_idx
             if i_show_mss
                 line.new(chart.point.from_index(sh_bar_idx, sh), chart.point.from_index(bar_index, sh), color=color.new(color.lime, 0), width=2, extend=extend.none)
                 label.new(chart.point.from_index(bar_index, high), text="MSS up", style=label.style_label_down, color=color.new(color.lime, 0), textcolor=color.black, size=size.small)
@@ -176,8 +170,6 @@ if mss_bear_disp_ok
         if close < sl
             sl_bar_idx = array.get(unc_sl_bar, j)
             mss_bear_fired := true
-            mss_bear_swing := sl
-            mss_bear_swing_bar := sl_bar_idx
             if i_show_mss
                 line.new(chart.point.from_index(sl_bar_idx, sl), chart.point.from_index(bar_index, sl), color=color.new(color.red, 0), width=2, extend=extend.none)
                 label.new(chart.point.from_index(bar_index, low), text="MSS dn", style=label.style_label_up, color=color.new(color.red, 0), textcolor=color.white, size=size.small)
@@ -187,57 +179,80 @@ if mss_bear_disp_ok
             j := j + 1
 
 // =============================================================================
-// MAP STATE — direction + delivery failure under 3-mode toggle
+// MAP STATE — direction, DF events, last-event tracking for table
 // =============================================================================
-// State carried across bars: map_direction ∈ {-1, 0, 1}
-//
-// Behavior per i_flip_mode when an MSS fires in the OPPOSITE direction to
-// current map_direction:
-//   A_DELIVERY_FAILURE : emit DF event, direction stays put
-//   B_REPLACEMENT      : direction flips, no DF event
-//   C_HYBRID           : emit DF event AND direction flips
-// On initial MSS (map_direction == 0) or same-direction MSS, direction
-// is simply set/reaffirmed — never a DF event.
+var int    map_direction   = 0
+var int    range_birth_bar = na
+var int    last_mss_time   = 0
+var string last_mss_kind   = "-"
+var int    last_df_time    = 0
+var string last_df_kind    = "-"
 
-var int map_direction = 0
-var int range_birth_bar = na
-
-// MSS bull handling
 if mss_bull_fired
     opposite = map_direction == -1
     fire_df  = opposite and (i_flip_mode == "A_DELIVERY_FAILURE" or i_flip_mode == "C_HYBRID")
     do_flip  = (not opposite) or (i_flip_mode == "B_REPLACEMENT") or (i_flip_mode == "C_HYBRID")
-
-    if fire_df and i_show_df_events
-        label.new(chart.point.from_index(bar_index, low - candle_range * 0.5), text="DF↑", style=label.style_label_up, color=color.new(color.orange, 0), textcolor=color.black, size=size.normal)
-
+    last_mss_time := time
+    last_mss_kind := "MSS up"
+    if fire_df
+        last_df_time := time
+        last_df_kind := "DF up"
+        if i_show_df_events
+            label.new(chart.point.from_index(bar_index, low - candle_range * 0.5), text="DF up", style=label.style_label_up, color=color.new(color.orange, 0), textcolor=color.black, size=size.normal)
     if do_flip
         map_direction := 1
         range_birth_bar := bar_index
 
-// MSS bear handling
 if mss_bear_fired
     opposite = map_direction == 1
     fire_df  = opposite and (i_flip_mode == "A_DELIVERY_FAILURE" or i_flip_mode == "C_HYBRID")
     do_flip  = (not opposite) or (i_flip_mode == "B_REPLACEMENT") or (i_flip_mode == "C_HYBRID")
-
-    if fire_df and i_show_df_events
-        label.new(chart.point.from_index(bar_index, high + candle_range * 0.5), text="DF↓", style=label.style_label_down, color=color.new(color.orange, 0), textcolor=color.black, size=size.normal)
-
+    last_mss_time := time
+    last_mss_kind := "MSS dn"
+    if fire_df
+        last_df_time := time
+        last_df_kind := "DF dn"
+        if i_show_df_events
+            label.new(chart.point.from_index(bar_index, high + candle_range * 0.5), text="DF dn", style=label.style_label_down, color=color.new(color.orange, 0), textcolor=color.black, size=size.normal)
     if do_flip
         map_direction := -1
         range_birth_bar := bar_index
 
-// Background tint = current map_direction (lets you read direction off any bar)
 dir_bg = map_direction == 1 ? color.new(color.green, 92) : map_direction == -1 ? color.new(color.red, 92) : na
 bgcolor(i_show_direction ? dir_bg : na, title="Map Direction tint")
 
-// Top-right badge showing current state (single sticky label that updates each bar)
-var label badge = na
-if barstate.islast
-    txt = "Map Direction: " + (map_direction == 1 ? "BULL ▲" : map_direction == -1 ? "BEAR ▼" : "—") + "  |  Mode: " + i_flip_mode
-    if na(badge)
-        badge := label.new(chart.point.from_index(bar_index, high), text=txt, style=label.style_label_left, color=color.new(color.black, 20), textcolor=color.white, size=size.normal)
-    else
-        label.set_xy(badge, bar_index, high)
-        label.set_text(badge, txt)
+// =============================================================================
+// Pivotal date markers (Gate 2 fixture anchors)
+// =============================================================================
+// Olya's 5 pivotal Gate 2 dates — labeled directly on the chart so we never
+// have to ask "which bar is which date" during the session.
+bar_date_int = year * 10000 + month * 100 + dayofmonth
+
+pivotal_text = bar_date_int == 20251210 ? "Dec 10  range birth?"      : bar_date_int == 20251224 ? "Dec 24  target hit?"        : bar_date_int == 20260122 ? "Jan 22  range succession?"  : bar_date_int == 20260302 ? "Mar 2  BEARISH FLIP"        : bar_date_int == 20260303 ? "Mar 3  bearish low?"        : ""
+
+if i_show_pivotal and pivotal_text != ""
+    label.new(chart.point.from_index(bar_index, high + candle_range * 1.5), text=pivotal_text, style=label.style_label_down, color=color.new(color.blue, 0), textcolor=color.white, size=size.small)
+
+// =============================================================================
+// State-readout table (top-right corner) — current state at-a-glance
+// =============================================================================
+var table state_table = table.new(position.top_right, 2, 6, bgcolor=color.new(color.black, 70), border_color=color.new(color.gray, 50), border_width=1)
+
+if barstate.islast and i_show_table
+    dir_str = map_direction == 1 ? "BULL up" : map_direction == -1 ? "BEAR dn" : "-"
+    dir_col = map_direction == 1 ? color.lime : map_direction == -1 ? color.red : color.gray
+    mss_str = last_mss_kind == "-" ? "-" : last_mss_kind + "  " + str.format("{0,date,yyyy-MM-dd}", last_mss_time)
+    df_str  = last_df_kind  == "-" ? "-" : last_df_kind  + "  " + str.format("{0,date,yyyy-MM-dd}", last_df_time)
+
+    table.cell(state_table, 0, 0, "HTF MAP V1",  bgcolor=color.new(color.navy, 30), text_color=color.white, text_size=size.normal)
+    table.cell(state_table, 1, 0, "calibration", bgcolor=color.new(color.navy, 30), text_color=color.silver, text_size=size.normal)
+    table.cell(state_table, 0, 1, "Date",        text_color=color.silver, text_size=size.small)
+    table.cell(state_table, 1, 1, str.format("{0,date,yyyy-MM-dd}", time), text_color=color.white,  text_size=size.small)
+    table.cell(state_table, 0, 2, "Direction",   text_color=color.silver, text_size=size.small)
+    table.cell(state_table, 1, 2, dir_str,       text_color=dir_col,      text_size=size.small)
+    table.cell(state_table, 0, 3, "Mode",        text_color=color.silver, text_size=size.small)
+    table.cell(state_table, 1, 3, i_flip_mode,   text_color=color.yellow, text_size=size.small)
+    table.cell(state_table, 0, 4, "Last MSS",    text_color=color.silver, text_size=size.small)
+    table.cell(state_table, 1, 4, mss_str,       text_color=color.white,  text_size=size.small)
+    table.cell(state_table, 0, 5, "Last DF",     text_color=color.silver, text_size=size.small)
+    table.cell(state_table, 1, 5, df_str,        text_color=color.orange, text_size=size.small)
