@@ -46,3 +46,16 @@ The Pine indicator will expose this as a 3-way toggle so Olya can pick the mode 
 - All four "Expected map cells" render correctly on the Pine indicator for the chosen mode
 - Screenshot captured at `screenshots/2026-03-02_<mode>_flip.png`
 - Olya signs off on which mode is the locked rule → captured in `port/direction_flip_rule.yaml`
+
+## Olya session log (in flight — 2026-05-17, paused)
+**Root cause of the Mar 12 / Mar 2 mismatch:** the underlying `swing_points` Daily params are too strict at the en1gma locked-baseline defaults (`N=2, height_filter_pips=15.0`, which are tagged PROPOSED for HTF — never Olya-confirmed on Daily). Many "obvious" SWH/SWL Olya can see on the chart are filtered out, which propagates: missing SLs → no bearish MSS on Mar 2 → no flip → Mar 12 finally clears a later SL.
+
+**Calibration so far (defaults applied in-Pine, not yet in en1gma):**
+| N | h (pips) | Bear flip lands | Olya |
+|---|---|---|---|
+| 2 | 15 | Mar 12 | "Missing many obvious swings" |
+| 2 | 5  | Mar 2-3 area | "Closer, still missing some" |
+| 2 | 3  | Mar 2-3 area | "30 Mar SWL caught. 10 Feb SWH, 19 Feb SWL still missing" |
+| 1 | 3  | TBD | **PENDING VERDICT** — Olya stepped out before verifying |
+
+See `notes/olya_session_state.md` for full pickup context.
