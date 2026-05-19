@@ -6,8 +6,13 @@ When all rows are PASS and the corresponding `port/*.yaml` rule contracts are si
 
 | Fixture | What should fire (Olya) | What Pine fires | Screenshot | Status |
 |---|---|---|---|---|
-| `2026-03-02_bearish_flip` | Direction flip + DF event + bearish range birth + active_extreme_low from 3 Mar | **Mode A**: no flip, DF up only (stuck bear). **Mode B**: flip on first SL break after bull phase (mid-Mar, not 2 Mar), no DF. **Mode C**: flip + DF dn on same bar. | `iter4_mode_A/B/C.png`, `olya_session_*.png` | PARTIAL — **root cause found**: Daily swing params (N=2 h=15) too strict, missing obvious SWH/SWL. Lowering filter moves bear flip from Mar 12 → Mar 2-3 area. Currently dialing N+h with Olya (paused at N=1 h=3, pending verdict). |
-| `2025-12-10_range_birth` | (fill from review pack) | — | — | TODO |
+| `2026-03-02_bearish_flip` | Direction flip + DF event + bearish range birth + active_extreme_low from 3 Mar | After 4 canon-mirror fixes (swing_points, MSS most-recent-only, MSS suppression, displacement grades): MSS dn correctly lands on Mar 02 against Feb 19 SWL @ 1.17418. Olya signed off on Mar 02. | `olya_fix1_mar02_visible.png`, `olya_fix3_*`, `olya_fix5_legend_simplified.png` | **PASS** (algo correct, awaiting Daily disp gates lock) |
+| `2025-12-10_range_birth` | MSS up at Dec 10 (clear break per Olya) | Currently algorithm consumes silently — atr_ratio 1.47 < 1.5 by 0.03; grade=WEAK blocks override | — | **OPEN** — needs Daily-loose preset or "allow override on WEAK" |
+| `2025-06-11_clear_mss` | Clear MSS at Jun 11 | atr_ratio 1.07 < 1.5; body 0.71 & close 0.87 just below override gates | — | **OPEN** — needs looser gates |
+| `2025-06-12_clear_mss` | Clear MSS at Jun 12 | close_loc 0.66 < 0.75; grade=VALID blocks override | — | **OPEN** — needs looser gates |
+| `2025-10-30_clear_mss` | Bear MSS at Oct 30 | body 0.40 < 0.6 AND fail; body 0.40 < 0.75 override fail | — | **OPEN** — needs looser body gate |
+| `2025-12-22_clear_mss` | Bull MSS at Dec 22 | atr_ratio 1.18 < 1.5; body 0.67 < 0.75 | — | **OPEN** — needs looser gates |
+| `2025-12-23_clear_mss` | Bull MSS at Dec 23 | ✓ Cluster path catches | — | PASS |
 | `2026-01-22_range_succession` | (fill from review pack) | — | — | TODO |
 | `2025-12-24_target_reassess` | (fill from review pack) | — | — | TODO |
 | `h4_timing_visibility` | H4 transitions visible at pivotal Daily moments | — | — | TODO |
@@ -16,5 +21,11 @@ When all rows are PASS and the corresponding `port/*.yaml` rule contracts are si
 
 | Rule | Modes considered | Olya-selected mode | Locked in `port/` |
 |---|---|---|---|
-| Direction-flip rule (Mar 2) | A=Delivery Failure / B=Replacement / C=Hybrid (built + visualized 2026-05-17) | C_HYBRID inferred from session direction; not explicitly ruled yet — revisit after swings locked | `port/direction_flip_rule.yaml` (not yet written) |
-| Daily swing params (NEW — surfaced during 2026-05-17 session) | en1gma default N=2 h=15 too strict — Olya wants N=? h=? to catch obvious SWH/SWL she listed | Iterating: baseline → N2 h5 → N2 h3 → **N1 h3 (current, pending verdict)** | `port/daily_swing_params.yaml` (to be written) |
+| Direction-flip rule (Mar 2) | A=Delivery Failure / B=Replacement / C=Hybrid (built + visualized 2026-05-17) | C_HYBRID provisional (matches Mar 02 ruling); explicit Q1 confirmation captured | `port/direction_flip_rule.yaml` (to be written) |
+| Daily swing params | en1gma `N=2 h=15` (PROPOSED) | Olya signed off on visual catches with canon algorithm at canon defaults — `N=2, h=15` confirmed for DISPLAY threshold (catches Feb 02/06 SWLs at 300+p, Feb 10 SH at 163p, Feb 19 SWL at 186p) | `port/daily_swing_params.yaml` (ready to write after final verify) |
+| Daily displacement gates | Canon HTF `atr=1.5 body=0.6 close=0.25 override-no-grade` (PROPOSED, never Olya-LOCKED) | Awaiting Olya verification of looser values via Daily-loose preset on missing-MSS cases | `port/daily_displacement_params.yaml` (pending) |
+
+## Session log
+- 2026-05-17 morning: Daily swing params iteration (paused mid-session at N=1 h=3, pending Olya verdict)
+- 2026-05-17 afternoon: **Canon-audit pivot**. Found 4 Pine ≠ canonical algorithm bugs. Landed fixes. Olya signed off on Mar 02. New issue surfaced: Daily displacement gates too strict for Olya's missing-MSS examples.
+- Next session: Daily-loose preset live tuning with Olya on 5 specific dates → lock displacement params → write port YAMLs → port to en1gma.

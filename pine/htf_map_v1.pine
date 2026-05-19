@@ -3,186 +3,343 @@
 // htf_map_v1 — pine_calibration sandbox
 // =============================================================================
 // Visual calibration of the en1gma HTF MAP algorithm on FX:EURUSD Daily.
-// Source of truth: en1gma/console/detection/locked_baseline.yaml + vLOCK.yaml.
-// CODE WINS in conflicts (per en1gma/docs/canonical/DETECTION_PRIMITIVES_INDEX.md).
+// Source of truth: en1gma/console/detection/{swing_points,displacement,mss}.py
+//                + en1gma/console/detection/locked_baseline.yaml
 //
-// Calibration slice (Mar 2 fixture):
-//   [x] Daily swing_points    (fractal-N=2 + 15-pip height filter)
-//   [x] Daily displacement    (ATR + body + close-gate + decisive_override + cluster_2)
-//   [x] Daily mss             (swing-break with displacement gate + swing consumption)
-//   [x] Map Direction state + Delivery Failure event
-//   [x] 3-mode direction-flip toggle (DF / REPLACEMENT / HYBRID)
-//   [x] Pivotal date markers + state-readout table
+// SESSION FIXES (2026-05-17, with Olya):
+//   1. swing_points: emit ALL N-pivots; height_pips = distance to nearest prior
+//      opposite swing (NOT immediate-neighbor pips). Catches cluster-top SHs.
+//   2. MSS: check ONLY most-recent prior swing (mss.py:254-264).
+//      → Resolves Olya Q1: Mar 02 is the bearish flip, not Feb 18.
+//   3. MSS: impulse suppression (mss.py:215-251). No-op on Daily (new_day_reset)
+//      but canon-faithful structure in place for LTF port.
+//   4. Displacement: ATR grade taxonomy (STRONG/VALID/WEAK), qualifies grid
+//      keyed at "atr1.5_br0.6" (mss.py:173). Decisive override pip_floor 20p.
+//      Cluster-2 strict progression + overlap ≤ 0.35.
+//   5. UX bundle: toggleable legend (bottom-left), tooltips, simplified yellow
+//      dot displacement (bold=STRONG, faded=qualified), live displacement
+//      params + Daily-loose preset, MSS lines removed.
 //
-// Fixture: fixtures/2026-03-02_bearish_flip.md
+// OPEN QUESTION (carry into next session):
+//   Olya identifies missing-MSS at Jun 11 / Jun 12 / Oct 30 / Dec 10 / Dec 22
+//   (2025) — canonical HTF displacement gates (atr_mult 1.5 / body 0.6 / close
+//   0.25) are too strict for Daily. Live inputs + Daily-loose preset allow
+//   visual tuning. locked_baseline.yaml tags HTF disp as PROPOSED, so this
+//   calibration IS the moment to lock Daily values.
 // =============================================================================
 
 indicator("HTF MAP V1 — calibration sandbox", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
 
-// --- locked params (Daily) — verbatim from en1gma locked_baseline.yaml ---
-SWING_N_DAILY              = 2
-SWING_HEIGHT_FILTER_PIPS_D = 15.0
-
-DISP_HTF_ATR_MULT          = 1.50
-DISP_HTF_BODY_RATIO        = 0.65
-DISP_HTF_CLOSE_GATE        = 0.25
-DISP_DECISIVE_BODY_MIN     = 0.75
-DISP_DECISIVE_CLOSE_MAX    = 0.10
-DISP_NET_EFFICIENCY_MIN    = 0.65
-
-MSS_HTF_CONFIRM_WINDOW_BARS = 1
 PIP_VALUE = 0.0001
 
-// --- inputs ---
-i_flip_mode         = input.string("C_HYBRID", "Direction-flip rule mode", options=["A_DELIVERY_FAILURE", "B_REPLACEMENT", "C_HYBRID"], group="Calibration")
-i_show_swings       = input.bool(true, "Show swing points",        group="Debug overlays")
-i_show_displacement = input.bool(true, "Show displacement",        group="Debug overlays")
-i_show_mss          = input.bool(true, "Show MSS",                 group="Debug overlays")
-i_show_direction    = input.bool(true, "Show Map Direction tint",  group="Map overlays")
-i_show_df_events    = input.bool(true, "Show DF events",           group="Map overlays")
-i_show_pivotal      = input.bool(true, "Show pivotal date markers", group="Map overlays")
-i_show_table        = input.bool(true, "Show state readout table",  group="Map overlays")
-i_atr_length        = input.int(14,    "ATR length",               group="Calibration", minval=1)
+SUP_PULLBACK_RESET_PIPS   = 5.0
+SUP_PULLBACK_RESET_ATR    = 0.25
+SUP_OPP_DISP_RESET        = true
+SUP_NEW_DAY_RESET         = true
+
+i_swing_n           = input.int(2,    "Swing fractal N", group="Swing tuning (LIVE)", minval=1, maxval=5, tooltip="N-bar pivot. Pivot at bar i requires high[i] to be max of bars [i-N..i+N] (asymmetric: >= left, > right). Canonical Daily PROPOSED = 2.")
+i_min_height_pips   = input.float(15.0,"Min height for DISPLAY (pips)", group="Swing tuning (LIVE)", minval=0, step=1.0, tooltip="Distance to nearest prior opposite swing. NOT a detection gate — DISPLAY only. Canonical Daily PROPOSED = 15.0.")
+i_swing_date_labels = input.bool(true, "Show date+height labels at swings", group="Swing tuning (LIVE)", tooltip="Each swing gets a labeled bubble with TV-session date + height (pip distance to prior opposite swing).")
+
+i_flip_mode         = input.string("C_HYBRID", "Direction-flip rule mode", options=["A_DELIVERY_FAILURE", "B_REPLACEMENT", "C_HYBRID"], group="Calibration", tooltip="A=DF only (no flip on opposite MSS), B=Replacement (flip on any MSS), C=Hybrid (DF event + flip on opposite MSS). Currently C_HYBRID per provisional Olya ruling.")
+i_atr_length        = input.int(14,    "ATR length", group="Calibration", minval=1, tooltip="ATR period used by displacement gates. Canonical = 14.")
+i_use_suppression   = input.bool(true, "MSS impulse suppression", group="Calibration", tooltip="Canonical mss.py:215-251. Suppresses same-direction MSS until retrace >= max(5p, 0.25*ATR), opposite-disp, or new forex day. No-op on Daily (new_day_reset=true clears every bar).")
+
+i_loose_preset      = input.bool(false, "Daily-loose preset (override gates)", group="Displacement gates (LIVE)", tooltip="When ON, overrides the sliders below with Olya-tuned looser values: atr_mult=1.25, body_ratio=0.55, close_gate=0.35, override_body=0.65, override_close=0.15, allow_weak_override=true. Use to catch Olya's missing-MSS cases (Jun 11, Jun 12, Oct 30, Dec 10, Dec 22 2025). When OFF, slider values are used directly.")
+i_atr_mult          = input.float(1.5,  "atr_multiplier (AND gate)", group="Displacement gates (LIVE)", minval=0.5, maxval=3.0, step=0.05, tooltip="Min ATR ratio (range/ATR) for 'and' MSS gate. Canonical HTF = 1.5. Loose preset = 1.25.")
+i_body_ratio        = input.float(0.6,  "body_ratio (AND gate)", group="Displacement gates (LIVE)", minval=0.3, maxval=0.9, step=0.05, tooltip="Min body/range ratio for 'and' MSS gate. Canonical HTF = 0.6. Loose preset = 0.55.")
+i_close_gate        = input.float(0.25, "close_gate (max % from extreme)", group="Displacement gates (LIVE)", minval=0.05, maxval=0.5, step=0.05, tooltip="Max distance of close from directional extreme as % of range. Canonical HTF = 0.25 (close in top/bottom 25%). Loose preset = 0.35.")
+i_override_body     = input.float(0.75, "decisive_override body_min", group="Displacement gates (LIVE)", minval=0.5, maxval=0.95, step=0.05, tooltip="Min body_ratio for decisive override path. Canonical = 0.75. Loose preset = 0.65.")
+i_override_close    = input.float(0.10, "decisive_override close_max", group="Displacement gates (LIVE)", minval=0.0, maxval=0.3, step=0.05, tooltip="Max distance from extreme for decisive override. Canonical = 0.10 (close in extreme 10%). Loose preset = 0.15.")
+i_override_pip      = input.float(20.0, "decisive_override pip_floor (1D)", group="Displacement gates (LIVE)", minval=0, step=1.0, tooltip="Min range in pips for decisive override. Canonical 1D = 20.0.")
+i_override_allow_weak = input.bool(false, "Allow override on WEAK grade", group="Displacement gates (LIVE)", tooltip="Canonical: override only fires when bar has NO grade (atr<1.25). When ON, allows override path on WEAK grade (atr 1.25-1.5). Major lever for catching Olya's missing-MSS cases on Daily.")
+
+i_show_swings       = input.bool(true,  "Show swing points",         group="Layer toggles", tooltip="Swing crosses + date/height labels.")
+i_show_displacement = input.bool(true,  "Show displacement",         group="Layer toggles", tooltip="Yellow dots for MSS-qualifying displacements (bright=STRONG, faded=VALID/override/cluster).")
+i_show_mss          = input.bool(true,  "Show MSS",                  group="Layer toggles", tooltip="MSS up/dn labels at the bar where close crosses the most-recent prior swing with qualified displacement.")
+i_show_direction    = input.bool(false, "Show Map Direction tint",   group="Layer toggles", tooltip="Background green/red tint reflecting current Map Direction.")
+i_show_df_events    = input.bool(false, "Show DF events",            group="Layer toggles", tooltip="Orange Delivery Failure labels fired when MSS flips against the prior direction (C_HYBRID/A_DELIVERY_FAILURE modes).")
+i_show_pivotal      = input.bool(true,  "Show pivotal date markers", group="Layer toggles", tooltip="Blue Olya/Gate 2 fixture date anchors (Dec 10, Dec 24, Jan 22, Mar 2, Mar 3).")
+i_show_table        = input.bool(true,  "Show state readout table",  group="Layer toggles", tooltip="Top-right table with current Date / Direction / Mode / Swings params / Disp gates / Last MSS / Last DF.")
+i_show_weak_disp    = input.bool(false, "Show WEAK displacements", group="Layer toggles", tooltip="When ON, shows non-qualifying WEAK-grade displacements as gray dots (diagnostic only — not used by MSS).")
+i_show_legend       = input.bool(false, "Show legend (bottom-left)", group="Layer toggles", tooltip="Toggleable legend explaining every symbol on the chart.")
+
+eff_atr_mult       = i_loose_preset ? 1.25 : i_atr_mult
+eff_body_ratio     = i_loose_preset ? 0.55 : i_body_ratio
+eff_close_gate     = i_loose_preset ? 0.35 : i_close_gate
+eff_override_body  = i_loose_preset ? 0.65 : i_override_body
+eff_override_close = i_loose_preset ? 0.15 : i_override_close
+eff_allow_weak_override = i_loose_preset ? true : i_override_allow_weak
 
 // =============================================================================
-// swing_points (Daily)
+// swing_points — canonical en1gma (swing_points.py)
 // =============================================================================
-ph_raw = ta.pivothigh(SWING_N_DAILY, SWING_N_DAILY)
-pl_raw = ta.pivotlow(SWING_N_DAILY, SWING_N_DAILY)
+f_is_swing_high(int N) =>
+    bool is_sh = bar_index >= N * 2
+    if is_sh
+        for j = N + 1 to N * 2
+            if high[N] < high[j]
+                is_sh := false
+                break
+    if is_sh
+        for j = 0 to N - 1
+            if high[N] <= high[j]
+                is_sh := false
+                break
+    is_sh
 
-f_max_neighbor_high(int N) =>
-    float m = na
-    for i = 0 to N * 2
-        if i != N
-            v = high[i]
-            m := na(m) ? v : math.max(m, v)
-    m
+f_is_swing_low(int N) =>
+    bool is_sl = bar_index >= N * 2
+    if is_sl
+        for j = N + 1 to N * 2
+            if low[N] > low[j]
+                is_sl := false
+                break
+    if is_sl
+        for j = 0 to N - 1
+            if low[N] >= low[j]
+                is_sl := false
+                break
+    is_sl
 
-f_min_neighbor_low(int N) =>
-    float m = na
-    for i = 0 to N * 2
-        if i != N
-            v = low[i]
-            m := na(m) ? v : math.min(m, v)
-    m
+new_sh = f_is_swing_high(i_swing_n)
+new_sl = f_is_swing_low(i_swing_n)
 
-ph_height_pips = not na(ph_raw) ? (ph_raw - f_max_neighbor_high(SWING_N_DAILY)) / PIP_VALUE : na
-pl_height_pips = not na(pl_raw) ? (f_min_neighbor_low(SWING_N_DAILY) - pl_raw) / PIP_VALUE : na
+var float last_sh_price = na
+var float last_sl_price = na
 
-ph_valid = not na(ph_raw) and ph_height_pips >= SWING_HEIGHT_FILTER_PIPS_D
-pl_valid = not na(pl_raw) and pl_height_pips >= SWING_HEIGHT_FILTER_PIPS_D
+float sh_price = na
+float sh_height = na
+float sl_price = na
+float sl_height = na
+int   pivot_bar_idx = bar_index - i_swing_n
 
-plot_ph = (ph_valid and i_show_swings) ? ph_raw : na
-plot_pl = (pl_valid and i_show_swings) ? pl_raw : na
+if new_sh
+    sh_price := high[i_swing_n]
+    sh_height := na(last_sl_price) ? 999.0 : (sh_price - last_sl_price) / PIP_VALUE
+    last_sh_price := sh_price
 
-plot(plot_ph, title="Daily SH", style=plot.style_cross, linewidth=3, color=color.red,   offset=-SWING_N_DAILY)
-plot(plot_pl, title="Daily SL", style=plot.style_cross, linewidth=3, color=color.green, offset=-SWING_N_DAILY)
+if new_sl
+    sl_price := low[i_swing_n]
+    sl_height := na(last_sh_price) ? 999.0 : (last_sh_price - sl_price) / PIP_VALUE
+    last_sl_price := sl_price
+
+sh_display_strong = new_sh and sh_height >= i_min_height_pips
+sh_display_weak   = new_sh and sh_height <  i_min_height_pips
+sl_display_strong = new_sl and sl_height >= i_min_height_pips
+sl_display_weak   = new_sl and sl_height <  i_min_height_pips
+
+plot_sh_strong = (sh_display_strong and i_show_swings) ? sh_price : na
+plot_sh_weak   = (sh_display_weak   and i_show_swings) ? sh_price : na
+plot_sl_strong = (sl_display_strong and i_show_swings) ? sl_price : na
+plot_sl_weak   = (sl_display_weak   and i_show_swings) ? sl_price : na
+
+plot(plot_sh_strong, title="SH strong", style=plot.style_cross, linewidth=4, color=color.red,                  offset=-i_swing_n)
+plot(plot_sh_weak,   title="SH weak",   style=plot.style_cross, linewidth=2, color=color.new(color.red, 60),   offset=-i_swing_n)
+plot(plot_sl_strong, title="SL strong", style=plot.style_cross, linewidth=4, color=color.green,                offset=-i_swing_n)
+plot(plot_sl_weak,   title="SL weak",   style=plot.style_cross, linewidth=2, color=color.new(color.green, 60), offset=-i_swing_n)
+
+if new_sh and i_show_swings and i_swing_date_labels
+    pivot_time = time[i_swing_n] + 12 * 60 * 60 * 1000
+    height_str = sh_height >= 999.0 ? "—" : str.tostring(sh_height, "#.#") + "p"
+    label_text = str.format("{0,date,MMM dd}", pivot_time) + "\n" + height_str
+    label_col = sh_height >= i_min_height_pips ? color.new(color.red, 30) : color.new(color.red, 75)
+    label.new(chart.point.from_index(pivot_bar_idx, sh_price), text=label_text, style=label.style_label_down, color=label_col, textcolor=color.white, size=size.tiny, yloc=yloc.abovebar)
+
+if new_sl and i_show_swings and i_swing_date_labels
+    pivot_time = time[i_swing_n] + 12 * 60 * 60 * 1000
+    height_str = sl_height >= 999.0 ? "—" : str.tostring(sl_height, "#.#") + "p"
+    label_text = str.format("{0,date,MMM dd}", pivot_time) + "\n" + height_str
+    label_col = sl_height >= i_min_height_pips ? color.new(color.green, 30) : color.new(color.green, 75)
+    label.new(chart.point.from_index(pivot_bar_idx, sl_price), text=label_text, style=label.style_label_up, color=label_col, textcolor=color.white, size=size.tiny, yloc=yloc.belowbar)
 
 // =============================================================================
-// displacement (Daily)
+// displacement — canonical en1gma with LIVE gates
 // =============================================================================
 candle_range = high - low
 candle_body  = math.abs(close - open)
 body_ratio   = candle_range > 0 ? candle_body / candle_range : 0.0
 atr_val      = ta.atr(i_atr_length)
 atr_ratio    = atr_val > 0 ? candle_range / atr_val : 0.0
+range_pips   = candle_range / PIP_VALUE
 
 is_bull_bar  = close > open
 is_bear_bar  = close < open
 close_loc    = candle_range > 0 ? (close - low) / candle_range : 0.5
+disp_dir     = is_bull_bar ? 1 : is_bear_bar ? -1 : 0
 
-decisive_bull = is_bull_bar and body_ratio >= DISP_DECISIVE_BODY_MIN and close_loc >= (1 - DISP_DECISIVE_CLOSE_MAX)
-decisive_bear = is_bear_bar and body_ratio >= DISP_DECISIVE_BODY_MIN and close_loc <= DISP_DECISIVE_CLOSE_MAX
+close_loc_pass = (disp_dir > 0 and close_loc >= (1 - eff_close_gate)) or (disp_dir < 0 and close_loc <= eff_close_gate)
 
-single_atr_bull = is_bull_bar and atr_ratio >= DISP_HTF_ATR_MULT and body_ratio >= DISP_HTF_BODY_RATIO and close_loc >= (1 - DISP_HTF_CLOSE_GATE)
-single_atr_bear = is_bear_bar and atr_ratio >= DISP_HTF_ATR_MULT and body_ratio >= DISP_HTF_BODY_RATIO and close_loc <= DISP_HTF_CLOSE_GATE
+string single_grade = atr_ratio >= 2.0 ? "STRONG" : atr_ratio >= 1.5 ? "VALID" : atr_ratio >= 1.25 ? "WEAK" : ""
 
-two_bar_high   = math.max(high, high[1])
-two_bar_low    = math.min(low, low[1])
+qualifies_and = atr_ratio >= eff_atr_mult and body_ratio >= eff_body_ratio and close_loc_pass
+
+override_grade_ok = single_grade == "" or (eff_allow_weak_override and single_grade == "WEAK")
+override_pip_pass = range_pips >= i_override_pip
+decisive_override_bull = disp_dir > 0 and override_grade_ok and body_ratio >= eff_override_body and close_loc >= (1 - eff_override_close) and override_pip_pass
+decisive_override_bear = disp_dir < 0 and override_grade_ok and body_ratio >= eff_override_body and close_loc <= eff_override_close and override_pip_pass
+decisive_override = decisive_override_bull or decisive_override_bear
+
+string effective_grade = decisive_override ? "VALID" : single_grade
+
+prior_high = high[1]
+prior_low = low[1]
+prior_range = prior_high - prior_low
+
+same_dir_bull  = close > open and close[1] > open[1]
+same_dir_bear  = close < open and close[1] < open[1]
+
+cluster_prog_bull = same_dir_bull and high > prior_high and low >= prior_low
+cluster_prog_bear = same_dir_bear and low < prior_low and high <= prior_high
+
+two_bar_high   = math.max(high, prior_high)
+two_bar_low    = math.min(low, prior_low)
 two_bar_range  = two_bar_high - two_bar_low
 two_bar_net    = math.abs(close - open[1])
 two_bar_eff    = two_bar_range > 0 ? two_bar_net / two_bar_range : 0.0
 two_bar_atr_r  = atr_val > 0 ? two_bar_range / atr_val : 0.0
-same_dir_bull  = close > open and close[1] > open[1]
-same_dir_bear  = close < open and close[1] < open[1]
 
-single_path_bull = decisive_bull or single_atr_bull
-single_path_bear = decisive_bear or single_atr_bear
-prior_single_bull = decisive_bull[1] or single_atr_bull[1]
-prior_single_bear = decisive_bear[1] or single_atr_bear[1]
+cluster_overlap_top = math.min(high, prior_high)
+cluster_overlap_bot = math.max(low, prior_low)
+cluster_overlap     = math.max(0.0, cluster_overlap_top - cluster_overlap_bot)
+cluster_smaller_r   = math.min(candle_range, prior_range)
+cluster_overlap_r   = cluster_smaller_r > 0 ? cluster_overlap / cluster_smaller_r : 1.0
+cluster_overlap_ok  = cluster_overlap_r <= 0.35
 
-cluster_bull = same_dir_bull and two_bar_atr_r >= DISP_HTF_ATR_MULT and two_bar_eff >= DISP_NET_EFFICIENCY_MIN and not single_path_bull and not prior_single_bull
-cluster_bear = same_dir_bear and two_bar_atr_r >= DISP_HTF_ATR_MULT and two_bar_eff >= DISP_NET_EFFICIENCY_MIN and not single_path_bear and not prior_single_bear
+cluster_close_ok = close_loc_pass
 
-qg_strong = decisive_bull or decisive_bear
-qg_valid  = (not qg_strong) and (single_atr_bull or single_atr_bear or cluster_bull or cluster_bear)
+prior_qualifies_and = qualifies_and[1]
+cluster_bull = cluster_prog_bull and two_bar_atr_r >= eff_atr_mult and two_bar_eff >= 0.65 and cluster_overlap_ok and cluster_close_ok and not qualifies_and and not prior_qualifies_and
+cluster_bear = cluster_prog_bear and two_bar_atr_r >= eff_atr_mult and two_bar_eff >= 0.65 and cluster_overlap_ok and cluster_close_ok and not qualifies_and and not prior_qualifies_and
 
-disp_dir  = (decisive_bull or single_atr_bull or cluster_bull) ? 1 : (decisive_bear or single_atr_bear or cluster_bear) ? -1 : 0
-quality_grade = qg_strong ? "STRONG" : qg_valid ? "VALID" : ""
+disp_mss_qualified = qualifies_and or decisive_override or cluster_bull or cluster_bear
 
-plotshape(i_show_displacement and qg_strong and disp_dir > 0, title="Disp STRONG bull", style=shape.diamond, location=location.belowbar, color=color.yellow, size=size.tiny)
-plotshape(i_show_displacement and qg_strong and disp_dir < 0, title="Disp STRONG bear", style=shape.diamond, location=location.abovebar, color=color.yellow, size=size.tiny)
-plotshape(i_show_displacement and qg_valid  and disp_dir > 0, title="Disp VALID bull",  style=shape.circle,  location=location.belowbar, color=color.aqua,   size=size.tiny)
-plotshape(i_show_displacement and qg_valid  and disp_dir < 0, title="Disp VALID bear",  style=shape.circle,  location=location.abovebar, color=color.aqua,   size=size.tiny)
+disp_is_strong = effective_grade == "STRONG" and qualifies_and
+disp_is_other_qualified = disp_mss_qualified and not disp_is_strong
+disp_is_weak   = effective_grade == "WEAK" and not disp_mss_qualified
+
+plot_strong_bull = i_show_displacement and disp_is_strong and disp_dir > 0
+plot_strong_bear = i_show_displacement and disp_is_strong and disp_dir < 0
+plot_other_bull  = i_show_displacement and disp_is_other_qualified and disp_dir > 0
+plot_other_bear  = i_show_displacement and disp_is_other_qualified and disp_dir < 0
+plot_weak_bull   = i_show_displacement and i_show_weak_disp and disp_is_weak and disp_dir > 0
+plot_weak_bear   = i_show_displacement and i_show_weak_disp and disp_is_weak and disp_dir < 0
+
+plotshape(plot_strong_bull, title="STRONG bull", style=shape.circle, location=location.belowbar, color=color.yellow,                 size=size.small)
+plotshape(plot_strong_bear, title="STRONG bear", style=shape.circle, location=location.abovebar, color=color.yellow,                 size=size.small)
+plotshape(plot_other_bull,  title="QUAL bull",   style=shape.circle, location=location.belowbar, color=color.new(color.yellow, 60),  size=size.tiny)
+plotshape(plot_other_bear,  title="QUAL bear",   style=shape.circle, location=location.abovebar, color=color.new(color.yellow, 60),  size=size.tiny)
+plotshape(plot_weak_bull,   title="WEAK bull",   style=shape.circle, location=location.belowbar, color=color.new(color.gray, 50),    size=size.tiny)
+plotshape(plot_weak_bear,   title="WEAK bear",   style=shape.circle, location=location.abovebar, color=color.new(color.gray, 50),    size=size.tiny)
 
 // =============================================================================
-// mss (Daily) — consumes displacement + swings, emits MSS up/dn events
+// mss — canonical en1gma (no horizontal lines — labels only)
 // =============================================================================
 var array<float> unc_sh_price = array.new<float>()
 var array<int>   unc_sh_bar   = array.new<int>()
 var array<float> unc_sl_price = array.new<float>()
 var array<int>   unc_sl_bar   = array.new<int>()
 
-if ph_valid
-    array.push(unc_sh_price, ph_raw)
-    array.push(unc_sh_bar,   bar_index - SWING_N_DAILY)
-if pl_valid
-    array.push(unc_sl_price, pl_raw)
-    array.push(unc_sl_bar,   bar_index - SWING_N_DAILY)
+if new_sh
+    array.push(unc_sh_price, sh_price)
+    array.push(unc_sh_bar,   pivot_bar_idx)
+if new_sl
+    array.push(unc_sl_price, sl_price)
+    array.push(unc_sl_bar,   pivot_bar_idx)
 
-disp_bull_now  = (qg_strong or qg_valid) and disp_dir > 0
-disp_bear_now  = (qg_strong or qg_valid) and disp_dir < 0
-mss_bull_disp_ok = disp_bull_now or disp_bull_now[1]
-mss_bear_disp_ok = disp_bear_now or disp_bear_now[1]
+mss_disp_bull = disp_mss_qualified and disp_dir > 0
+mss_disp_bear = disp_mss_qualified and disp_dir < 0
+mss_bull_disp_ok = mss_disp_bull or mss_disp_bull[1]
+mss_bear_disp_ok = mss_disp_bear or mss_disp_bear[1]
 
-bool  mss_bull_fired  = false
-bool  mss_bear_fired  = false
+var int   sup_dir       = 0
+var float sup_extreme   = na
+var int   sup_until_bar = na
+var int   sup_forex_day = na
 
-if mss_bull_disp_ok
-    int i = 0
-    while i < array.size(unc_sh_price)
-        sh = array.get(unc_sh_price, i)
-        if close > sh
-            sh_bar_idx = array.get(unc_sh_bar, i)
+bool sup_skip_bull = false
+bool sup_skip_bear = false
+
+current_fxday = year * 10000 + month * 100 + dayofmonth
+
+if i_use_suppression and sup_dir != 0
+    if sup_dir == 1 and high > sup_extreme
+        sup_extreme := high
+    if sup_dir == -1 and low < sup_extreme
+        sup_extreme := low
+
+    if bar_index <= sup_until_bar
+        if sup_dir == 1
+            sup_skip_bull := true
+        else
+            sup_skip_bear := true
+    else
+        bool reset_now = false
+        min_pb = math.max(SUP_PULLBACK_RESET_PIPS * PIP_VALUE, SUP_PULLBACK_RESET_ATR * nz(atr_val, 0))
+        if sup_dir == 1
+            retrace = sup_extreme - low
+            if retrace >= min_pb
+                reset_now := true
+        if sup_dir == -1
+            retrace = high - sup_extreme
+            if retrace >= min_pb
+                reset_now := true
+        if SUP_OPP_DISP_RESET
+            if sup_dir == 1 and disp_mss_qualified and disp_dir < 0
+                reset_now := true
+            if sup_dir == -1 and disp_mss_qualified and disp_dir > 0
+                reset_now := true
+        if SUP_NEW_DAY_RESET and current_fxday != sup_forex_day
+            reset_now := true
+
+        if reset_now
+            sup_dir := 0
+            sup_extreme := na
+            sup_until_bar := na
+            sup_forex_day := na
+        else
+            if sup_dir == 1
+                sup_skip_bull := true
+            else
+                sup_skip_bear := true
+
+bool mss_bull_fired = false
+bool mss_bear_fired = false
+
+if not sup_skip_bull and array.size(unc_sh_price) > 0
+    last_sh_idx = array.size(unc_sh_price) - 1
+    recent_sh = array.get(unc_sh_price, last_sh_idx)
+    if close > recent_sh
+        array.remove(unc_sh_price, last_sh_idx)
+        array.remove(unc_sh_bar,   last_sh_idx)
+        if mss_bull_disp_ok
             mss_bull_fired := true
             if i_show_mss
-                line.new(chart.point.from_index(sh_bar_idx, sh), chart.point.from_index(bar_index, sh), color=color.new(color.lime, 0), width=2, extend=extend.none)
                 label.new(chart.point.from_index(bar_index, high), text="MSS up", style=label.style_label_down, color=color.new(color.lime, 0), textcolor=color.black, size=size.small)
-            array.remove(unc_sh_price, i)
-            array.remove(unc_sh_bar,   i)
-        else
-            i := i + 1
 
-if mss_bear_disp_ok
-    int j = 0
-    while j < array.size(unc_sl_price)
-        sl = array.get(unc_sl_price, j)
-        if close < sl
-            sl_bar_idx = array.get(unc_sl_bar, j)
+if not sup_skip_bear and array.size(unc_sl_price) > 0
+    last_sl_idx = array.size(unc_sl_price) - 1
+    recent_sl = array.get(unc_sl_price, last_sl_idx)
+    if close < recent_sl
+        array.remove(unc_sl_price, last_sl_idx)
+        array.remove(unc_sl_bar,   last_sl_idx)
+        if mss_bear_disp_ok
             mss_bear_fired := true
             if i_show_mss
-                line.new(chart.point.from_index(sl_bar_idx, sl), chart.point.from_index(bar_index, sl), color=color.new(color.red, 0), width=2, extend=extend.none)
                 label.new(chart.point.from_index(bar_index, low), text="MSS dn", style=label.style_label_up, color=color.new(color.red, 0), textcolor=color.white, size=size.small)
-            array.remove(unc_sl_price, j)
-            array.remove(unc_sl_bar,   j)
-        else
-            j := j + 1
 
-// =============================================================================
-// MAP STATE — direction, DF events, last-event tracking for table
-// =============================================================================
+if mss_bull_fired
+    sup_dir := 1
+    sup_extreme := high
+    sup_until_bar := bar_index
+    sup_forex_day := current_fxday
+if mss_bear_fired
+    sup_dir := -1
+    sup_extreme := low
+    sup_until_bar := bar_index
+    sup_forex_day := current_fxday
+
 var int    map_direction   = 0
-var int    range_birth_bar = na
 var int    last_mss_time   = 0
 var string last_mss_kind   = "-"
 var int    last_df_time    = 0
@@ -201,7 +358,6 @@ if mss_bull_fired
             label.new(chart.point.from_index(bar_index, low - candle_range * 0.5), text="DF up", style=label.style_label_up, color=color.new(color.orange, 0), textcolor=color.black, size=size.normal)
     if do_flip
         map_direction := 1
-        range_birth_bar := bar_index
 
 if mss_bear_fired
     opposite = map_direction == 1
@@ -216,43 +372,75 @@ if mss_bear_fired
             label.new(chart.point.from_index(bar_index, high + candle_range * 0.5), text="DF dn", style=label.style_label_down, color=color.new(color.orange, 0), textcolor=color.black, size=size.normal)
     if do_flip
         map_direction := -1
-        range_birth_bar := bar_index
 
 dir_bg = map_direction == 1 ? color.new(color.green, 92) : map_direction == -1 ? color.new(color.red, 92) : na
 bgcolor(i_show_direction ? dir_bg : na, title="Map Direction tint")
 
-// =============================================================================
-// Pivotal date markers (Gate 2 fixture anchors)
-// =============================================================================
-// Olya's 5 pivotal Gate 2 dates — labeled directly on the chart so we never
-// have to ask "which bar is which date" during the session.
-bar_date_int = year * 10000 + month * 100 + dayofmonth
-
-pivotal_text = bar_date_int == 20251210 ? "Dec 10  range birth?"      : bar_date_int == 20251224 ? "Dec 24  target hit?"        : bar_date_int == 20260122 ? "Jan 22  range succession?"  : bar_date_int == 20260302 ? "Mar 2  BEARISH FLIP"        : bar_date_int == 20260303 ? "Mar 3  bearish low?"        : ""
+session_time = time + 12 * 60 * 60 * 1000
+session_year = year(session_time)
+session_month = month(session_time)
+session_day = dayofmonth(session_time)
+bar_date_int = session_year * 10000 + session_month * 100 + session_day
+pivotal_text = bar_date_int == 20251210 ? "Dec 10  range birth?" : bar_date_int == 20251224 ? "Dec 24  target hit?" : bar_date_int == 20260122 ? "Jan 22  range succession?" : bar_date_int == 20260302 ? "Mar 2  BEARISH FLIP" : bar_date_int == 20260303 ? "Mar 3  bearish low?" : ""
 
 if i_show_pivotal and pivotal_text != ""
     label.new(chart.point.from_index(bar_index, high + candle_range * 1.5), text=pivotal_text, style=label.style_label_down, color=color.new(color.blue, 0), textcolor=color.white, size=size.small)
 
-// =============================================================================
-// State-readout table (top-right corner) — current state at-a-glance
-// =============================================================================
-var table state_table = table.new(position.top_right, 2, 6, bgcolor=color.new(color.black, 70), border_color=color.new(color.gray, 50), border_width=1)
+// ─── State readout table (top-right) ─────────────────────────────────────────
+var table state_table = table.new(position.top_right, 2, 8, bgcolor=color.new(color.black, 70), border_color=color.new(color.gray, 50), border_width=1)
 
 if barstate.islast and i_show_table
     dir_str = map_direction == 1 ? "BULL up" : map_direction == -1 ? "BEAR dn" : "-"
     dir_col = map_direction == 1 ? color.lime : map_direction == -1 ? color.red : color.gray
     mss_str = last_mss_kind == "-" ? "-" : last_mss_kind + "  " + str.format("{0,date,yyyy-MM-dd}", last_mss_time)
     df_str  = last_df_kind  == "-" ? "-" : last_df_kind  + "  " + str.format("{0,date,yyyy-MM-dd}", last_df_time)
+    sw_str  = "N=" + str.tostring(i_swing_n) + ", h>=" + str.tostring(i_min_height_pips, "#.#") + "p disp"
+    gate_str = "atr>=" + str.tostring(eff_atr_mult, "#.##") + ", body>=" + str.tostring(eff_body_ratio, "#.##") + ", cg<=" + str.tostring(eff_close_gate, "#.##")
+    preset_str = i_loose_preset ? "LOOSE" : "canon"
+    preset_col = i_loose_preset ? color.orange : color.silver
 
-    table.cell(state_table, 0, 0, "HTF MAP V1",  bgcolor=color.new(color.navy, 30), text_color=color.white, text_size=size.normal)
+    table.cell(state_table, 0, 0, "HTF MAP V1",  bgcolor=color.new(color.navy, 30), text_color=color.white,  text_size=size.normal)
     table.cell(state_table, 1, 0, "calibration", bgcolor=color.new(color.navy, 30), text_color=color.silver, text_size=size.normal)
     table.cell(state_table, 0, 1, "Date",        text_color=color.silver, text_size=size.small)
-    table.cell(state_table, 1, 1, str.format("{0,date,yyyy-MM-dd}", time), text_color=color.white,  text_size=size.small)
+    table.cell(state_table, 1, 1, str.format("{0,date,yyyy-MM-dd}", time), text_color=color.white, text_size=size.small)
     table.cell(state_table, 0, 2, "Direction",   text_color=color.silver, text_size=size.small)
     table.cell(state_table, 1, 2, dir_str,       text_color=dir_col,      text_size=size.small)
     table.cell(state_table, 0, 3, "Mode",        text_color=color.silver, text_size=size.small)
     table.cell(state_table, 1, 3, i_flip_mode,   text_color=color.yellow, text_size=size.small)
-    table.cell(state_table, 0, 4, "Last MSS",    text_color=color.silver, text_size=size.small)
-    table.cell(state_table, 1, 4, mss_str,       text_color=color.white,  text_size=size.small)
-    table.cell(state_table, 0, 5, "Last DF",     text_color=color.silver, text_size=size.small)
-    table.cell(state_table, 1, 5, df_str,        text_color=color.orange, text_size=size.small)
+    table.cell(state_table, 0, 4, "Swings",      text_color=color.silver, text_size=size.small)
+    table.cell(state_table, 1, 4, sw_str,        text_color=color.aqua,   text_size=size.small)
+    table.cell(state_table, 0, 5, "Disp gates",  text_color=color.silver, text_size=size.small)
+    table.cell(state_table, 1, 5, gate_str + "  [" + preset_str + "]", text_color=preset_col, text_size=size.small)
+    table.cell(state_table, 0, 6, "Last MSS",    text_color=color.silver, text_size=size.small)
+    table.cell(state_table, 1, 6, mss_str,       text_color=color.white,  text_size=size.small)
+    table.cell(state_table, 0, 7, "Last DF",     text_color=color.silver, text_size=size.small)
+    table.cell(state_table, 1, 7, df_str,        text_color=color.orange, text_size=size.small)
+
+// ─── Toggleable legend (bottom-left) ─────────────────────────────────────────
+var table legend = table.new(position.bottom_left, 2, 12, bgcolor=color.new(color.black, 70), border_color=color.new(color.gray, 50), border_width=1)
+
+if barstate.islast and i_show_legend
+    table.cell(legend, 0, 0,  "HTF MAP V1 — Legend", bgcolor=color.new(color.navy, 30), text_color=color.white, text_size=size.normal)
+    table.cell(legend, 1, 0,  "symbol → meaning",    bgcolor=color.new(color.navy, 30), text_color=color.silver, text_size=size.normal)
+    table.cell(legend, 0, 1,  "✚ red (bold)",        text_color=color.red,    text_size=size.small)
+    table.cell(legend, 1, 1,  "SWH ≥ display threshold",          text_color=color.silver, text_size=size.small)
+    table.cell(legend, 0, 2,  "✚ red (dim)",         text_color=color.new(color.red, 60), text_size=size.small)
+    table.cell(legend, 1, 2,  "SWH < threshold (weak)",           text_color=color.silver, text_size=size.small)
+    table.cell(legend, 0, 3,  "✚ green (bold)",      text_color=color.green,  text_size=size.small)
+    table.cell(legend, 1, 3,  "SWL ≥ display threshold",          text_color=color.silver, text_size=size.small)
+    table.cell(legend, 0, 4,  "✚ green (dim)",       text_color=color.new(color.green, 60), text_size=size.small)
+    table.cell(legend, 1, 4,  "SWL < threshold (weak)",           text_color=color.silver, text_size=size.small)
+    table.cell(legend, 0, 5,  "● yellow (bold)",     text_color=color.yellow, text_size=size.small)
+    table.cell(legend, 1, 5,  "STRONG displacement (atr ≥ 2.0)",  text_color=color.silver, text_size=size.small)
+    table.cell(legend, 0, 6,  "● yellow (dim)",      text_color=color.new(color.yellow, 60), text_size=size.small)
+    table.cell(legend, 1, 6,  "VALID / override / cluster",       text_color=color.silver, text_size=size.small)
+    table.cell(legend, 0, 7,  "● gray",              text_color=color.new(color.gray, 30), text_size=size.small)
+    table.cell(legend, 1, 7,  "WEAK (toggle to show)",            text_color=color.silver, text_size=size.small)
+    table.cell(legend, 0, 8,  "MSS up label",        text_color=color.lime,   text_size=size.small)
+    table.cell(legend, 1, 8,  "close > most-recent SH + disp OK", text_color=color.silver, text_size=size.small)
+    table.cell(legend, 0, 9,  "MSS dn label",        text_color=color.red,    text_size=size.small)
+    table.cell(legend, 1, 9,  "close < most-recent SL + disp OK", text_color=color.silver, text_size=size.small)
+    table.cell(legend, 0, 10, "DF up/dn",            text_color=color.orange, text_size=size.small)
+    table.cell(legend, 1, 10, "Delivery Failure (flip MSS)",      text_color=color.silver, text_size=size.small)
+    table.cell(legend, 0, 11, "Pivotal date",        text_color=color.blue,   text_size=size.small)
+    table.cell(legend, 1, 11, "Olya/Gate 2 fixture anchor",       text_color=color.silver, text_size=size.small)
