@@ -1,0 +1,212 @@
+# Rule contract — Daily HTF displacement parameters
+#
+# Pine sandbox → en1gma port handoff artifact for the Daily HTF displacement gates.
+# Source of canonical anchors: ~en1gma/docs/reviews/MAP_V1_GATE_2_OLYA_PERDAY_SESSION_STOCKTAKE_2026_05_18.md §3
+# Pine session evidence: ~pine_calibration/notes/olya_session_2026_05_17_continued.md
+#
+# DRAFT: candidate values pre-filled from 2026-05-17 session evidence; awaits Olya
+# screen-share verification on the anchor set below. LOCKED only after Olya signs each
+# anchor row in `verification`.
+#
+# Port to en1gma/console/detection/locked_baseline.yaml is a SEPARATE G-ratified
+# sprint (V005 per stocktake §4 d1). This file is Pine-side handoff only.
+
+rule_name: daily_htf_displacement_params
+locked_date: TBD
+locked_by: G + Olya
+fixture_window: PIVOTAL_001..PIVOTAL_004 + 2025 missing-MSS anchors
+status: DRAFT
+
+# --- methodology anchor ---
+methodology_source:
+  baseline_ref: ~en1gma/docs/reviews/PHASE_5_C2_DAILY_LED_HTF_MAP_V1_METHODOLOGY_BASELINE_RATIFIED_2026_05_05.md
+  stocktake_ref: ~en1gma/docs/reviews/MAP_V1_GATE_2_OLYA_PERDAY_SESSION_STOCKTAKE_2026_05_18.md
+  spec_section: HTF displacement (locked_baseline.yaml lines 121-167; tagged PROPOSED 2026-03-15 forensic; never directly Olya-LOCKED)
+  driving_verdicts: [V005, V011, V015]
+  tuning_principles: [V003 "major moves > micro moves", V010 "trust calibrated rules on marginal cases"]
+
+# --- candidate values (pre-fill from 2026-05-17 evidence; Olya-verify) ---
+candidate_locked:
+  primitive: displacement
+  applies_to: [1D]  # HTF spec covers [1H, 4H, 1D] but Daily is the only level Pine-calibrated here
+  atr_multiplier: 1.25     # was 1.5 (canon)
+  body_ratio: 0.55         # was 0.60 (canon — note: locked_baseline.yaml shows 0.65, mss.py uses 0.6 via disp_key)
+  close_gate: 0.35         # was 0.25 (canon)
+  decisive_override:
+    body_min: 0.65         # was 0.75 (canon)
+    close_max: 0.15        # was 0.10 (canon)
+    pip_floor_1D: 20.0     # unchanged
+    allow_weak_grade: true # NEW — extends override to WEAK grade bars
+
+canonical_baseline_for_reference:
+  atr_multiplier: 1.5
+  body_ratio: 0.60
+  close_gate: 0.25
+  decisive_override:
+    body_min: 0.75
+    close_max: 0.10
+    pip_floor_1D: 20.0
+    allow_weak_grade: false
+
+# --- anchor verification matrix ---
+# Three categories per stocktake §3 + yesterday's notes:
+#   MSS_FIRE_TEST  — Daily-loose preset must FIRE MSS event on this bar
+#   SURFACE_TEST   — Daily-loose must SURFACE this bar as the named structural level
+#   REGRESSION     — Daily-loose must NOT remove this previously-verified output
+#
+# Olya verdict per row: PASS / FAIL / ADJUST(notes). Pine sandbox pre-flight may
+# pre-fill 'pine_observed' column; Olya verdict is the lock signal.
+
+verification:
+
+  mss_fire_test:
+    # Must fire MSS event under Daily-loose preset
+    - date: 2025-06-11
+      verdict_link: yesterday-notes
+      pine_pre_flight: TBD
+      olya_verdict: TBD
+    - date: 2025-06-12
+      verdict_link: yesterday-notes
+      pine_pre_flight: TBD
+      olya_verdict: TBD
+    - date: 2025-10-30
+      verdict_link: yesterday-notes
+      pine_pre_flight: TBD
+      olya_verdict: TBD
+    - date: 2025-12-10
+      verdict_link: yesterday-notes
+      pine_pre_flight: TBD
+      olya_verdict: TBD
+    - date: 2025-12-22
+      verdict_link: yesterday-notes
+      pine_pre_flight: TBD
+      olya_verdict: TBD
+    - date: 2026-01-20
+      verdict_link: V011
+      semantics: Daily MSS by breaking Jan 12 SWH @ 1.16985
+      pine_pre_flight: TBD
+      olya_verdict: TBD
+    - date: 2026-03-13
+      verdict_link: V015
+      semantics: Daily MSS + Displacement + Weekly-low break (full trend pivot)
+      pine_pre_flight: TBD
+      olya_verdict: TBD
+
+  surface_test:
+    # Must accurately surface as named structural level
+    - date: 2025-12-09
+      price: 1.16152
+      role: dealing_range_low
+      verdict_link: V004
+      pine_pre_flight: TBD
+      olya_verdict: TBD
+    - date: 2025-12-16
+      price: 1.18043
+      role: dealing_range_high
+      verdict_link: V004
+      pine_pre_flight: TBD
+      olya_verdict: TBD
+    - date: 2025-12-24
+      price: 1.18079
+      role: bullish_target_hit_DOL
+      verdict_link: V007
+      pine_pre_flight: TBD
+      olya_verdict: TBD
+      note: Per-day grid row drop in en1gma renderer (V008) — out of Pine scope.
+    - date: 2026-01-12
+      price: 1.16985
+      role: prior_swing_high
+      verdict_link: V011
+      pine_pre_flight: TBD
+      olya_verdict: TBD
+    - date: 2026-01-19
+      price: 1.15782
+      role: dealing_range_low_controlling
+      verdict_link: V001/V009
+      pine_pre_flight: TBD
+      olya_verdict: TBD
+    - date: 2026-01-27
+      price: 1.20826
+      role: dealing_range_high_controlling
+      verdict_link: V001/V009
+      pine_pre_flight: TBD
+      olya_verdict: TBD
+      note: Per-day grid row drop in en1gma renderer (V012) — out of Pine scope.
+    - date: 2026-03-13
+      price: 1.14097
+      role: bearish_range_low
+      verdict_link: V015
+      pine_pre_flight: TBD
+      olya_verdict: TBD
+      note: Also covered by mss_fire_test row above; cross-link only.
+
+  regression:
+    # Must NOT regress under Daily-loose; Olya already signed off on these
+    - date: 2025-02-02
+      role: SWL
+      height_pips: 306
+      verdict_link: 2026-05-17 session
+      pine_pre_flight: TBD
+      olya_verdict: TBD
+    - date: 2025-02-06
+      role: SWL
+      height_pips: 317
+      verdict_link: 2026-05-17 session
+      pine_pre_flight: TBD
+      olya_verdict: TBD
+    - date: 2025-02-10
+      role: SWH
+      height_pips: 163
+      verdict_link: 2026-05-17 session
+      pine_pre_flight: TBD
+      olya_verdict: TBD
+    - date: 2025-02-19
+      role: SWL
+      height_pips: 186
+      verdict_link: 2026-05-17 session
+      pine_pre_flight: TBD
+      olya_verdict: TBD
+    - date: 2025-02-23
+      role: SH
+      height_pips: 92
+      verdict_link: 2026-05-17 session
+      pine_pre_flight: TBD
+      olya_verdict: TBD
+    - date: 2025-02-26
+      role: SH
+      height_pips: 87
+      verdict_link: 2026-05-17 session
+      pine_pre_flight: TBD
+      olya_verdict: TBD
+    - date: 2025-03-02
+      role: bear MSS (close 1.16129 < Feb 19 SWL 1.17418)
+      verdict_link: 2026-05-17 session
+      pine_pre_flight: TBD
+      olya_verdict: TBD
+    - date: 2025-03-03
+      role: SL
+      height_pips: 298
+      verdict_link: 2026-05-17 session
+      pine_pre_flight: TBD
+      olya_verdict: TBD
+
+# --- session capture ---
+session_log:
+  - date: 2026-05-17
+    note: Canon-mirror audit + 4 algo fixes + UX bundle + Daily-loose preset toggle. Mar 02 BEARISH FLIP signed off by Olya.
+  - date: 2026-05-19
+    note: TBD — Daily-loose preset verification across anchor matrix.
+
+# --- python port contract ---
+python_port:
+  target_module: ~en1gma/console/detection/locked_baseline.yaml (HTF displacement section, lines 121-167)
+  port_sprint: V005 (G-ratified separately per stocktake §4 d1, §5 step_3)
+  scope: PROPOSED → LOCKED on Daily HTF section only
+  out_of_scope_for_this_yaml:
+    - Daily FVG tracking (§6 OB/BPR/IFVG/composite PDA standing stop)
+    - Weekly Terrain References (M002 NEX advisor; separate G routing decision)
+    - Renderer/persistence cluster (F2; V002/V007/V008/V012/V016 separate engineering lane)
+  signal_diff_path: diffs/daily_displacement_signal_diff.csv
+  parity_check: |
+    Pine and Python must emit identical displacement fires (and downstream MSS fires
+    that depend on displacement gates) on every bar in the verification matrix above.
