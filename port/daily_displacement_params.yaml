@@ -59,16 +59,51 @@ canonical_baseline_for_reference:
 
 verification:
 
+  displacement_tuning_anchors_2024:
+    # 2026-05-19 — Olya identified 5 dates where Pine produces NO displacement (no yellow dot)
+    # even though close > prior SWH wicks. Displacement gates too strict. Daily-loose preset
+    # candidate values insufficient. Phase 1 entry point: tune until these fire.
+    - date: 2024-05-03
+      role: missing_displacement (no yellow dot, close > SWH)
+      olya_verdict: TBD (Phase 1)
+      pine_pre_flight: TBD
+    - date: 2024-05-14
+      role: missing_displacement
+      olya_verdict: TBD (Phase 1)
+      pine_pre_flight: TBD
+    - date: 2024-07-03
+      role: missing_displacement
+      olya_verdict: TBD (Phase 1)
+      pine_pre_flight: TBD
+    - date: 2024-07-11
+      role: missing_displacement
+      olya_verdict: TBD (Phase 1)
+      pine_pre_flight: TBD
+    - date: 2024-07-23
+      role: missing_displacement
+      olya_verdict: TBD (Phase 1)
+      pine_pre_flight: TBD
+
   mss_fire_test:
-    # Must fire MSS event under Daily-loose preset
+    # Must fire MSS event under Daily-loose preset.
+    # NOTE 2026-05-19: Jun 11 PASS verdict was under PRE-FIX algorithm (cascading-fires bug).
+    # Post-fix-#6, the algorithm fires only ONCE per SH break, on the close-confirms day.
+    # Olya's late-fire observation on Jun 11/12 implies Pine post-fix fires on Jun 12 (close-day),
+    # not Jun 11 (Olya's intended MSS day). RE-VERIFY all MSS_FIRE_TEST anchors with the fixed
+    # algorithm in next session — earlier verdicts may shift to "fires-late" classification.
     - date: 2025-06-11
       verdict_link: yesterday-notes
-      pine_pre_flight: TBD
-      olya_verdict: TBD
+      pine_pre_flight: MSS up label visible under Daily-loose
+      olya_verdict: PASS
+      olya_verbatim: "MSS is actually on the 11th on this example"
+      session_ts: 2026-05-19
     - date: 2025-06-12
       verdict_link: yesterday-notes
-      pine_pre_flight: TBD
-      olya_verdict: TBD
+      pine_pre_flight: Displacement fires; no MSS label
+      olya_verdict: RECLASSIFIED — not an MSS anchor
+      olya_verbatim: "displacement fires on both 11 and 12, but MSS actually is on the 11th not 12th"
+      session_ts: 2026-05-19
+      methodology_note: Yesterday's notes classified Jun 12 as missing-MSS; Olya rules Jun 12 is displacement-only, no MSS expected. Canonical algorithm correct for this bar. Removes Jun 12 from the MSS_FIRE_TEST set (revised set = 6 anchors, not 7).
     - date: 2025-10-30
       verdict_link: yesterday-notes
       pine_pre_flight: TBD
@@ -98,39 +133,45 @@ verification:
       price: 1.16152
       role: dealing_range_low
       verdict_link: V004
-      pine_pre_flight: TBD
-      olya_verdict: TBD
+      pine_pre_flight: green ✚ visible
+      olya_verdict: PASS
+      session_ts: 2026-05-19
     - date: 2025-12-16
       price: 1.18043
       role: dealing_range_high
       verdict_link: V004
-      pine_pre_flight: TBD
-      olya_verdict: TBD
+      pine_pre_flight: red ✚ visible
+      olya_verdict: PASS
+      session_ts: 2026-05-19
     - date: 2025-12-24
       price: 1.18079
       role: bullish_target_hit_DOL
       verdict_link: V007
-      pine_pre_flight: TBD
-      olya_verdict: TBD
+      pine_pre_flight: out-of-scope-Pine (en1gma renderer V008)
+      olya_verdict: N/A (V008 lane)
       note: Per-day grid row drop in en1gma renderer (V008) — out of Pine scope.
     - date: 2026-01-12
       price: 1.16985
       role: prior_swing_high
       verdict_link: V011
-      pine_pre_flight: TBD
-      olya_verdict: TBD
+      pine_pre_flight: red ✚ visible (linchpin for Jan 20 MSS)
+      olya_verdict: PASS
+      olya_verbatim: linchpin confirmed
+      session_ts: 2026-05-19
     - date: 2026-01-19
       price: 1.15782
       role: dealing_range_low_controlling
       verdict_link: V001/V009
-      pine_pre_flight: TBD
-      olya_verdict: TBD
+      pine_pre_flight: green ✚ visible
+      olya_verdict: PASS
+      session_ts: 2026-05-19
     - date: 2026-01-27
       price: 1.20826
       role: dealing_range_high_controlling
       verdict_link: V001/V009
-      pine_pre_flight: TBD
-      olya_verdict: TBD
+      pine_pre_flight: red ✚ visible
+      olya_verdict: PASS
+      session_ts: 2026-05-19
       note: Per-day grid row drop in en1gma renderer (V012) — out of Pine scope.
     - date: 2026-03-13
       price: 1.14097
@@ -195,7 +236,59 @@ session_log:
   - date: 2026-05-17
     note: Canon-mirror audit + 4 algo fixes + UX bundle + Daily-loose preset toggle. Mar 02 BEARISH FLIP signed off by Olya.
   - date: 2026-05-19
-    note: TBD — Daily-loose preset verification across anchor matrix.
+    note: |
+      Session 2026-05-19 — see notes/olya_session_2026_05_19.md for full orientation.
+
+      MAJOR OUTCOMES:
+      1. SWH/SWL primitive LOCKED at N=2 by Olya (port/daily_swing_params.yaml). 5 surface anchors PASS, 7 regression anchors HELD, 3 fringe dates accepted as documented tradeoff (N=1 noise outweighs benefit).
+      2. Pine MSS algorithm canon-mirror FIX #6 landed (broken-flag pattern). Cascading-fires bug FIXED + verified by Olya on Mar 4-12, Apr 21-22 examples. "Bullish-MSS-on-bearish-close" resolved as side-effect.
+      3. Late-fire (Apr 2/Jun 11/Jun 24/Jul 21 2025) PARKED — upstream swing detection granularity issue, resolving requires N=1 already ruled out for noise. Documented tradeoff.
+      4. 5 2024 dates (May 3, May 14, Jul 3, Jul 11, Jul 23) confirmed by Olya as NO displacement detection. Displacement gates too strict. Phase 1 tuning entry point.
+
+      ADDITIONAL CALIBRATION ANCHORS (Phase 1 tuning targets, displacement-gate side):
+      The 5 missing-fire 2024 dates must FIRE under tuned Daily displacement gates without
+      regressing the swing primitive lock. Add to verification matrix when Phase 1 resumes.
+
+      Phase 1 in progress, surfaced two MSS-level bugs during Oct 30 review:
+
+      MSS_BUG_PATTERN_A_CASCADING_FIRES:
+        symptom: After a correct MSS fires, same-direction MSS continues to fire on subsequent bars.
+        olya_examples_verbatim: |
+          "on MARCH 4th 2025 there is an MSS which is FIRES CORRECTLY, but then it fires again on the
+          next two candles on 5th, 6th, 11th and 12th"
+          "Then on 2nd April it is an MSS, but it doesn't fire until 3rd April, then it fires again on
+          the 4th April"
+          "Then 10th April is CORRECT, but again, it fires again on 11th which is NOT CORRECT"
+          "Then again the 21st April is correct (bullish MSS)"
+        hypothesis: Pine source line 21 from yesterday note — "MSS Fix #2 — Impulse suppression. No-op
+          on Daily (new_day_reset clears each bar)" — likely root cause. Suppression mechanism resets
+          every bar at Daily timeframe, defeating its purpose. Canonical en1gma may inherit this gap
+          if mss.py uses same new_day_reset gating.
+
+      MSS_BUG_PATTERN_B_DIRECTION_MISMATCH:
+        symptom: Bullish MSS labels firing on bars with bearish close (and likely vice versa).
+        olya_examples_verbatim: |
+          "on the 12th [March 2025] it fires a bullish MSS, on a bearish close"
+          "the 4th April (which is a bullish MSS firing on a bearish close again)"
+          "on the 22nd April it fires a BULLISH MSS on a BEARISH CLOSE (incorrect)"
+        hypothesis: Pine source line ~252: `mss_bull_disp_ok = mss_disp_bull or mss_disp_bull[1]`
+          (trailing-displacement window). Previous bar's displacement qualifies current bar's MSS
+          firing even if current bar closes opposite direction. Likely needs `is_bull_bar` /
+          `is_bear_bar` gate on the firing condition itself.
+
+      MSS_BUG_PATTERN_C_LATE_FIRING:
+        symptom: Real MSS bar missed; fires one bar late.
+        olya_examples_verbatim: |
+          "the 11th June, it MISSES the real MSS on that day, fires the next day showing up late on
+          the 12th June"
+        status: CONFLICT — earlier 2026-05-19 verdict on Jun 11 was PASS. May be illustrative
+          (Olya named "these are just examples to investigate, but they are symptomatic happening
+          elsewhere, these are illustrative") rather than verdict revision. Verify at session close.
+
+      Olya verbatim on status: "These are just examples to investigate, but they are symptomatic
+      (happening elsewhere, these are illustrative)"
+
+      Implication: displacement-gate calibration on hold pending decision — see fork below.
 
 # --- python port contract ---
 python_port:

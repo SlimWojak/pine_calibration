@@ -22,10 +22,11 @@ When all rows are PASS and the corresponding `port/*.yaml` rule contracts are si
 | Rule | Modes considered | Olya-selected mode | Locked in `port/` |
 |---|---|---|---|
 | Direction-flip rule (Mar 2) | A=Delivery Failure / B=Replacement / C=Hybrid (built + visualized 2026-05-17) | C_HYBRID provisional (matches Mar 02 ruling); explicit Q1 confirmation captured | `port/direction_flip_rule.yaml` (to be written) |
-| Daily swing params | en1gma `N=2 h=15` (PROPOSED) | Olya signed off on visual catches with canon algorithm at canon defaults — `N=2, h=15` confirmed for DISPLAY threshold (catches Feb 02/06 SWLs at 300+p, Feb 10 SH at 163p, Feb 19 SWL at 186p) | `port/daily_swing_params.yaml` (ready to write after final verify) |
+| Daily swing params | en1gma `N=2 h=15` (PROPOSED) | **LOCKED 2026-05-19 by Olya.** N=2, h_display=15p. 5 SURFACE anchors PASS (Dec 9, Dec 16, Jan 12 linchpin, Jan 19, Jan 27); 7 regression anchors HELD; N=1 experiment ruled out (too much noise for 3 fringe dates Aug 5 / Jan 22 / Feb 4) | `port/daily_swing_params.yaml` LOCKED |
 | Daily displacement gates | Canon HTF `atr=1.5 body=0.6 close=0.25 override-no-grade` (PROPOSED, never Olya-LOCKED) | Awaiting Olya verification of looser values via Daily-loose preset on missing-MSS cases | `port/daily_displacement_params.yaml` (pending) |
 
 ## Session log
 - 2026-05-17 morning: Daily swing params iteration (paused mid-session at N=1 h=3, pending Olya verdict)
 - 2026-05-17 afternoon: **Canon-audit pivot**. Found 4 Pine ≠ canonical algorithm bugs. Landed fixes. Olya signed off on Mar 02. New issue surfaced: Daily displacement gates too strict for Olya's missing-MSS examples.
-- Next session: Daily-loose preset live tuning with Olya on 5 specific dates → lock displacement params → write port YAMLs → port to en1gma.
+- 2026-05-19: **Phase 0 SWH/SWL primitive LOCKED** at N=2 by Olya. **MSS fix #6** landed (canon-mirror broken-flag pattern, fixes cascading-fires bug). **Late-fire parked** as swing-detection-granularity tradeoff. **5 new Phase 1 tuning anchors** identified (May 3/14, Jul 3/11/23 2024 — no displacement detection). Full session captured in `notes/olya_session_2026_05_19.md`.
+- Next session: Phase 1 displacement gate tuning with fixed Pine. Walk all anchors with Daily-loose preset, tune until clean, lock `port/daily_displacement_params.yaml`. Handoff to V005 en1gma sprint.

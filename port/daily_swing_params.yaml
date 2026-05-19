@@ -1,0 +1,154 @@
+# Rule contract — Daily HTF swing detection parameters
+#
+# Pine sandbox → en1gma port handoff for swing_points primitive at Daily timeframe.
+# Source of canonical anchors: ~en1gma/docs/reviews/MAP_V1_GATE_2_OLYA_PERDAY_SESSION_STOCKTAKE_2026_05_18.md §3
+# Pine evidence: ~pine_calibration/notes/preflight_2026_05_19.md + olya_session_2026_05_17_continued.md
+#
+# LOCKED by Olya 2026-05-19 in live screen-share with G.
+#
+# Port to en1gma is a SEPARATE G-ratified sprint (V005 per stocktake §4 d1).
+
+rule_name: daily_htf_swing_params
+locked_date: 2026-05-19
+locked_by: G + Olya (live screen-share)
+fixture_window: PIVOTAL_001..PIVOTAL_004 + 2025 calibration anchors
+status: LOCKED
+
+# --- methodology anchor ---
+methodology_source:
+  baseline_ref: ~en1gma/docs/reviews/PHASE_5_C2_DAILY_LED_HTF_MAP_V1_METHODOLOGY_BASELINE_RATIFIED_2026_05_05.md
+  stocktake_ref: ~en1gma/docs/reviews/MAP_V1_GATE_2_OLYA_PERDAY_SESSION_STOCKTAKE_2026_05_18.md
+  spec_section: swing_points (locked_baseline.yaml swing section; tagged PROPOSED 2026-03-15 forensic; never directly Olya-LOCKED until now)
+  driving_verdicts: [V001, V004, V009, V011, V015]
+  tuning_principles: [V003 "major moves > micro moves", V010 "trust calibrated rules on marginal cases"]
+
+# --- LOCKED values ---
+locked:
+  primitive: swing_points
+  applies_to: [1D]
+  N: 2                  # fractal pivot N — bar i is pivot iff high/low is extreme of bars [i-N..i+N]
+  height_display_pips: 15.0  # DISPLAY threshold only — NOT a detection gate.
+                             # Swings with height < 15p are emitted as weak (dim) markers;
+                             # ≥ 15p are emitted as strong (bold) markers. MSS chain uses ALL
+                             # detected swings regardless of display threshold.
+
+# --- canonical algorithm shape (canon-mirror, post-2026-05-17 audit) ---
+canonical_algorithm:
+  detection: "Emit ALL N-pivots — both SWH and SWL"
+  height_computation: "height_pips = distance to nearest prior opposite swing (NOT immediate-neighbor pips)"
+  canon_audit_fix_date: 2026-05-17
+  canon_audit_evidence: "~en1gma/console/detection/swing_points.py + ~pine_calibration/pine/htf_map_v1.pine lines 77-154"
+  why_critical: |
+    Pre-audit (2026-05-17 morning), Pine filtered pivots inline by immediate-neighbor
+    pips, killing cluster-top SHs (e.g. Feb 10 2026 SH was only 1.4p above Feb 09/11
+    neighbors, structurally real but algorithmically invisible). Canonical emits all,
+    computes height as leg amplitude. Olya signed off on canon-mirror algorithm same day.
+
+# --- anchor verification matrix (2026-05-19 session) ---
+verification:
+
+  surface_anchors_PASS:
+    # 5 of the 7 stocktake §3 surface anchors testable in Pine (Dec 24 + Jan 27 are en1gma renderer scope)
+    - date: 2025-12-09
+      price: 1.16152
+      role: dealing_range_low
+      verdict_link: V004
+      pine_state: green ✚ visible on Dec 9 candle
+      olya_verdict: PASS
+    - date: 2025-12-16
+      price: 1.18043
+      role: dealing_range_high
+      verdict_link: V004
+      pine_state: red ✚ visible on Dec 16 candle
+      olya_verdict: PASS
+    - date: 2026-01-12
+      price: 1.16985
+      role: prior_swing_high (LINCHPIN for Jan 20 MSS V011)
+      verdict_link: V011
+      pine_state: red ✚ visible on Jan 12 candle
+      olya_verdict: PASS
+      olya_verbatim: linchpin confirmed
+    - date: 2026-01-19
+      price: 1.15782
+      role: dealing_range_low_controlling
+      verdict_link: V001/V009
+      pine_state: green ✚ visible on Jan 19 candle
+      olya_verdict: PASS
+    - date: 2026-01-27
+      price: 1.20826
+      role: dealing_range_high_controlling
+      verdict_link: V001/V009
+      pine_state: red ✚ visible on Jan 27 candle
+      olya_verdict: PASS
+
+  regression_anchors_HELD:
+    # From 2026-05-17 session — Olya already signed off; today's check confirms no regression
+    - date: 2026-02-02
+      role: SWL
+      height_pips: 306
+      olya_verdict: HELD (verified 2026-05-17)
+    - date: 2026-02-06
+      role: SWL
+      height_pips: 317
+      olya_verdict: HELD (verified 2026-05-17)
+    - date: 2026-02-10
+      role: SWH
+      height_pips: 163
+      olya_verdict: HELD (verified 2026-05-17)
+    - date: 2026-02-19
+      role: SWL
+      height_pips: 186
+      olya_verdict: HELD (verified 2026-05-17)
+    - date: 2026-02-23
+      role: SH
+      height_pips: 92
+      olya_verdict: HELD (verified 2026-05-17)
+    - date: 2026-02-26
+      role: SH
+      height_pips: 87
+      olya_verdict: HELD (verified 2026-05-17)
+    - date: 2026-03-03
+      role: SL
+      height_pips: 298
+      olya_verdict: HELD (verified 2026-05-17)
+
+  documented_tradeoff_NOT_DETECTED:
+    # Olya identified 3 dates she considers structurally interesting that N=2 does not detect.
+    # N=1 experiment 2026-05-19 confirmed N=1 surfaces these dates BUT introduces unacceptable
+    # noise across the chart. Olya ruled: LOCK at N=2, accept these as documented tradeoff.
+    # Olya verbatim: "introduces far too much noise" / "current is actually very good, this is
+    # fine tuning only" / "OCD".
+    - date: 2025-08-05
+      detection_at_N2: false
+      detection_at_N1: true
+      olya_classification: fringe / OCD
+    - date: 2026-01-22
+      detection_at_N2: false
+      detection_at_N1: true
+      olya_classification: fringe / OCD
+      note: Pivotal marker "Jan 22 range succession?" sits on this bar but the bar itself is not a 2-bar fractal pivot.
+    - date: 2026-02-04
+      detection_at_N2: false
+      detection_at_N1: true
+      olya_classification: fringe / OCD
+
+# --- N parameter experiment evidence ---
+n_parameter_experiment_2026_05_19:
+  N_tested: [1, 2]
+  N_2_result: "All 5 SURFACE_TEST anchors PASS; all 7 regression anchors HELD; 3 fringe dates not detected."
+  N_1_result: "All 5 SURFACE_TEST anchors PASS; 3 fringe dates surface; chart populated with substantial extra swing markers."
+  olya_ruling: "LOCK at N=2 — N=1 noise outweighs benefit of catching 3 fringe dates."
+  ruling_ts: 2026-05-19
+  ruling_verbatim: "all of those dates we looked at do now appear as swing points, but we introduce far too much noise. So we lock the swing point logic at N=2 (reverted). And that will be SWH/SWL LOCKED by Olya"
+
+# --- python port contract ---
+python_port:
+  target_module: ~en1gma/console/detection/swing_points.py
+  target_locked_baseline: ~en1gma/console/detection/locked_baseline.yaml (swing_points section — PROPOSED → LOCKED)
+  port_sprint: V005 (G-ratified separately per stocktake §4 d1, §5 step_3)
+  scope: PROPOSED → LOCKED on Daily swing_points section only
+  signal_diff_path: diffs/daily_swing_points_signal_diff.csv
+  parity_check: |
+    Pine and Python swing_points must emit identical (bar_index, type, price, height_pips)
+    tuples on every bar in the verification matrix above, at N=2 with the canon-mirror
+    height computation (distance to nearest prior opposite swing).
