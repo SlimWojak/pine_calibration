@@ -1,8 +1,23 @@
 # CLAUDE.md — pine_calibration
 
-## Purpose
+## STATUS: PARKED 2026-05-19
+
+This repo is no longer the primary HTF Map V1 visual calibration surface. Pivot anchor: `~/en1gma/docs/reviews/HTF_CALIBRATION_PIVOT_PINE_TO_RESEARCH_ACCELERATOR_2026_05_19.md`.
+
+Primary HTF calibration is now `~/research_accelerator` (canon-by-inheritance harness; same tool that locked LTF primitives with Olya). See `~/research_accelerator/CLAUDE.md`.
+
+What this means for fresh agents:
+
+- Do NOT extend the Pine indicator further. No new primitives. No GOAL mode dispatch on Pine extension. The PINE_PRIMITIVE_EQUALISATION_BRIEF.md at `notes/` is OBSOLETE; do not act on it.
+- Pine indicator (`pine/htf_map_v1.pine`, 565 lines, 3 primitives canon-mirrored as of fix #11) is preserved as a stable sanity-check artifact. Useful when Olya has TV open and wants ad-hoc live verification on her trading terminal.
+- Olya rulings captured here (May 17 + May 19 sessions) have been migrated into the pivot brief section 5 for V005 sprint absorption. Source files (`port/*.yaml`, `notes/olya_session_*.md`, `fixtures/*`) remain in repo as record.
+- If you need to read a specific orphan ruling, see pivot brief section 5.1 through 5.6 for index plus citations back to source files in this repo.
+
+## Original Purpose (HISTORICAL — pre-pivot)
 
 Sandbox for calibrating the HTF MAP algorithm in Pine Script v6. Output of this repo is a **locked algorithm definition** that gets ported to `~en1gma` Python. This is not production code — optimize for iteration speed and visual clarity, not robustness.
+
+For HTF Map V1 work this purpose drifted from "algorithm exploration with port-back" to "strict canon mirror of already-locked algorithms" — a different shape of work with a permanent maintenance tax. The pivot to `~research_accelerator` removes that tax. The original purpose still applies for any future LTF or experimental algorithm slice that genuinely needs Pine v6 prototyping; it does NOT apply for HTF Map V1.
 
 ## Hard rules
 
@@ -43,4 +58,4 @@ Sandbox for calibrating the HTF MAP algorithm in Pine Script v6. Output of this 
   - `docs/reviews/PHASE_5_C2_DAILY_LED_HTF_MAP_V1_METHODOLOGY_BASELINE_RATIFIED_2026_05_05.md` — baseline
   - `docs/reviews/MAP_V1_GATE_2_OLYA_HUMAN_REVIEW_PACK_2026_05_16.md` — Gate 2 pack
   - `docs/reviews/MAP_V1_GATE_2_COUNTERFACTUAL_LAB_EVIDENCE_NOTE_2026_05_17.md` — counterfactual evidence
-- `~research_accelerator` — LTF visual-tuning precedent
+- `~research_accelerator` — PRIMARY HTF Map V1 visual calibration surface (post-pivot 2026-05-19); was LTF visual-tuning precedent pre-pivot. See `~/research_accelerator/CLAUDE.md`.
