@@ -20,6 +20,16 @@
 //      dot displacement (bold=STRONG, faded=qualified), live displacement
 //      params + Daily-loose preset, MSS lines removed.
 //
+// SESSION FIX #6 (2026-05-19, with Olya):
+//   MSS: switch from CONSUME-by-remove to MARK-BROKEN flag pattern (canon-mirror
+//   from mss.py:267-355 broken_swings set). Pre-fix Pine did array.remove on the
+//   most-recent SH after MSS up fired; next bar then checked against the
+//   next-older SH (lower price), often firing MSS again on bearish-close bars
+//   → cascading MSS labels across Mar 4-12, Apr 2-4, Apr 10-11, Apr 21-22 etc.
+//   Canon flags the swing as already-broken and keeps it as recent_sh; next bar
+//   sees the broken flag and skips. New SH formation resets to fresh state.
+//   Mirror applied to both SH (bull MSS) and SL (bear MSS) chains.
+//
 // OPEN QUESTION (carry into next session):
 //   Olya identifies missing-MSS at Jun 11 / Jun 12 / Oct 30 / Dec 10 / Dec 22
 //   (2025) — canonical HTF displacement gates (atr_mult 1.5 / body 0.6 / close
@@ -235,17 +245,21 @@ plotshape(plot_weak_bear,   title="WEAK bear",   style=shape.circle, location=lo
 // =============================================================================
 // mss — canonical en1gma (no horizontal lines — labels only)
 // =============================================================================
-var array<float> unc_sh_price = array.new<float>()
-var array<int>   unc_sh_bar   = array.new<int>()
-var array<float> unc_sl_price = array.new<float>()
-var array<int>   unc_sl_bar   = array.new<int>()
+var array<float> unc_sh_price  = array.new<float>()
+var array<int>   unc_sh_bar    = array.new<int>()
+var array<bool>  unc_sh_broken = array.new<bool>()
+var array<float> unc_sl_price  = array.new<float>()
+var array<int>   unc_sl_bar    = array.new<int>()
+var array<bool>  unc_sl_broken = array.new<bool>()
 
 if new_sh
-    array.push(unc_sh_price, sh_price)
-    array.push(unc_sh_bar,   pivot_bar_idx)
+    array.push(unc_sh_price,  sh_price)
+    array.push(unc_sh_bar,    pivot_bar_idx)
+    array.push(unc_sh_broken, false)
 if new_sl
-    array.push(unc_sl_price, sl_price)
-    array.push(unc_sl_bar,   pivot_bar_idx)
+    array.push(unc_sl_price,  sl_price)
+    array.push(unc_sl_bar,    pivot_bar_idx)
+    array.push(unc_sl_broken, false)
 
 mss_disp_bull = disp_mss_qualified and disp_dir > 0
 mss_disp_bear = disp_mss_qualified and disp_dir < 0
@@ -309,9 +323,9 @@ bool mss_bear_fired = false
 if not sup_skip_bull and array.size(unc_sh_price) > 0
     last_sh_idx = array.size(unc_sh_price) - 1
     recent_sh = array.get(unc_sh_price, last_sh_idx)
-    if close > recent_sh
-        array.remove(unc_sh_price, last_sh_idx)
-        array.remove(unc_sh_bar,   last_sh_idx)
+    sh_already_broken = array.get(unc_sh_broken, last_sh_idx)
+    if close > recent_sh and not sh_already_broken
+        array.set(unc_sh_broken, last_sh_idx, true)
         if mss_bull_disp_ok
             mss_bull_fired := true
             if i_show_mss
@@ -320,9 +334,9 @@ if not sup_skip_bull and array.size(unc_sh_price) > 0
 if not sup_skip_bear and array.size(unc_sl_price) > 0
     last_sl_idx = array.size(unc_sl_price) - 1
     recent_sl = array.get(unc_sl_price, last_sl_idx)
-    if close < recent_sl
-        array.remove(unc_sl_price, last_sl_idx)
-        array.remove(unc_sl_bar,   last_sl_idx)
+    sl_already_broken = array.get(unc_sl_broken, last_sl_idx)
+    if close < recent_sl and not sl_already_broken
+        array.set(unc_sl_broken, last_sl_idx, true)
         if mss_bear_disp_ok
             mss_bear_fired := true
             if i_show_mss
