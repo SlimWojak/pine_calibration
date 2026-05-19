@@ -60,29 +60,52 @@ canonical_baseline_for_reference:
 verification:
 
   displacement_tuning_anchors_2024:
-    # 2026-05-19 — Olya identified 5 dates where Pine produces NO displacement (no yellow dot)
-    # even though close > prior SWH wicks. Displacement gates too strict. Daily-loose preset
-    # candidate values insufficient. Phase 1 entry point: tune until these fire.
+    # 2026-05-19 — Olya identified 5 dates where Pine produces NO MSS (no green/red label),
+    # initially attributed to displacement being missing. Evening canon-audit revealed:
+    # the real issue was MSS confirmation window (Pine missed +1 lookahead) AND
+    # swing-consumption marking SH broken without MSS firing. Fixes #10-11 applied.
+    #
+    # Methodology principle restated by Olya: Pine MUST mirror canon LOGIC (same as locked
+    # primitives in en1gma/console/detection/), params MAY be tuned to HTF. Logic drift is
+    # a bug, not a feature. Param tuning to catch noise is rejected (V003 "major moves > micro").
+    #
+    # Per-anchor verdict post canon-mirror (fixes #7-11):
     - date: 2024-05-03
-      role: missing_displacement (no yellow dot, close > SWH)
-      olya_verdict: TBD (Phase 1)
-      pine_pre_flight: TBD
+      role: missing_MSS (no canon-grade disp anywhere in ±5 bars)
+      pine_pre_flight: 6E=F diagnostic — wide-range mid-close bar (atr=1.37, body=0.46, cl=0.46); fails AND-gate and override under both canon and Daily-loose. Neighborhood ±5 bars has no canon-HTF qualifying displacement.
+      post_fix_10_11_status: STILL MISSES — outside canon methodology
+      olya_verdict: TBD (recommend Option C — park as documented tradeoff, V003 rule)
+      candidate_resolution: V005+ canon amendment proposing "extension_bar" primitive for wide-range mid-close days (separate G-routing decision)
     - date: 2024-05-14
-      role: missing_displacement
-      olya_verdict: TBD (Phase 1)
-      pine_pre_flight: TBD
+      role: MSS up — close 1.08355 > May 3 SH @ 1.08155 (200p break)
+      pine_pre_flight: 6E=F shows May 13 fires canon-HTF disp via OVR path (body=1.00, cl=1.00, range=30.5p). Pine's [i-1, i] window catches → MSS SHOULD fire pre-fix.
+      post_fix_10_11_status: SHOULD FIRE — verify visually on FOREXCOM. If miss, likely OHLC divergence between 6E=F futures (used in diagnostic) and FOREXCOM:EURUSD (Pine chart source) on May 13 small body. Fix #10 catches it independently via May 15's STRONG AND-gate disp (atr=1.38/body=0.82/cl=0.89).
+      olya_verdict: TBD (await TV visual verify)
     - date: 2024-07-03
-      role: missing_displacement
-      olya_verdict: TBD (Phase 1)
-      pine_pre_flight: TBD
+      role: MSS up — wide-range bull with mid close (atr=1.32, body=0.42, cl=0.56)
+      pine_pre_flight: Bar itself fails displacement gates. Bar i+1 (Jul 4) DOES fire canon-HTF disp.
+      post_fix_10_11_status: NOW FIRES via +1 lookahead (canon HTF window=1, mss.py:42-63 semantics). MSS labels at Jul 3 (rendered at Jul 4 in real-time).
+      olya_verdict: TBD (verify post-fix)
     - date: 2024-07-11
-      role: missing_displacement
-      olya_verdict: TBD (Phase 1)
-      pine_pre_flight: TBD
+      role: MSS up — wide-range bull with mid close (atr=1.30, body=0.54, cl=0.54)
+      pine_pre_flight: Bar itself fails. Bar i+1 (Jul 12) DOES fire canon-HTF disp.
+      post_fix_10_11_status: NOW FIRES via +1 lookahead.
+      olya_verdict: TBD (verify post-fix)
     - date: 2024-07-23
-      role: missing_displacement
-      olya_verdict: TBD (Phase 1)
-      pine_pre_flight: TBD
+      role: missing_MSS (no canon-grade disp anywhere in ±5 bars)
+      pine_pre_flight: 6E=F diagnostic — bear bar with atr=1.09 (below 1.25 WEAK threshold), strong body=0.83 + close near low (cl=0.17). Override path fails by 2 basis points (cl 0.17 vs 0.15 canon threshold). Neighborhood ±5 bars has no canon-HTF qualifying displacement.
+      post_fix_10_11_status: STILL MISSES — outside canon methodology
+      olya_verdict: TBD (recommend Option C — park as documented tradeoff, V003 rule)
+      candidate_resolution: V005+ canon amendment OR loosen override close gate by 5bp (would need regression set check)
+
+  # Anchor reclassification summary (post canon-mirror fixes #7-11):
+  #   3/5 anchors now resolvable via canon-mirror (no methodology change):
+  #     - 2024-05-14: should fire pre-fix per diagnostic; verify on chart
+  #     - 2024-07-03: fix #10 +1 lookahead catches
+  #     - 2024-07-11: fix #10 +1 lookahead catches
+  #   2/5 anchors outside canon methodology:
+  #     - 2024-05-03, 2024-07-23: no canon-grade displacement in ±5 bar neighborhood
+  #     - Olya methodology decision required (V003 park OR V005+ canon amendment)
 
   mss_fire_test:
     # Must fire MSS event under Daily-loose preset.
@@ -235,6 +258,34 @@ verification:
 session_log:
   - date: 2026-05-17
     note: Canon-mirror audit + 4 algo fixes + UX bundle + Daily-loose preset toggle. Mar 02 BEARISH FLIP signed off by Olya.
+  - date: 2026-05-19_evening
+    note: |
+      EVENING CANON-MIRROR AUDIT — fixes #7-11 (see notes/olya_session_2026_05_19.md addendum)
+
+      Triggered by Olya's question "why no MSS on 2024 dates" and her methodology
+      principle "Pine MUST mirror canon LOGIC; params MAY be tuned to HTF."
+
+      FIVE additional canon-mirror drifts found and patched:
+        #7 (displacement) — removed `allow_weak_override` Pine-only knob; canon override
+           strictly gates on grade=None (atr<1.25) per displacement.py:337
+        #8 (displacement) — cluster-2 net_efficiency denominator fixed to canon
+           body/(r0+r1) per displacement.py:158 (was Pine's looser body/combined_range)
+        #9 (displacement) — eval precedence canon-mirrored: cluster→single→override
+           (was OR-flat with single-suppressing-cluster, inverted from canon)
+        #10 (mss) — +1 lookahead added via pending-break state; canon HTF window=1
+           searches disp in [i-1, i, i+1] per mss.py:42-63 (Pine had only [i-1, i])
+        #11 (mss) — swing_consumption canon-faithful (only mark SH broken when MSS fires
+           per mss.py:267; Pine pre-fix marked on any close > SH regardless)
+
+      Noise sweep (1Y 2024 EUR/USD, 6E=F proxy): pure parameter tuning to catch 5 anchors
+      requires 35.9% noise (3× canon's 12% baseline) with only 4/5 caught. Daily-loose
+      preset currently in Pine adds 2.3× canon noise WITHOUT catching any anchor — wasted
+      cost. Recommend revert to canon HTF values when locking displacement YAML.
+
+      Anchor reclassification:
+        3/5 (May 14, Jul 3, Jul 11) resolvable via canon-mirror — no methodology change
+        2/5 (May 3, Jul 23) outside canon methodology — V003 park or V005+ amendment
+
   - date: 2026-05-19
     note: |
       Session 2026-05-19 — see notes/olya_session_2026_05_19.md for full orientation.

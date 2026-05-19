@@ -30,6 +30,49 @@
 //   sees the broken flag and skips. New SH formation resets to fresh state.
 //   Mirror applied to both SH (bull MSS) and SL (bear MSS) chains.
 //
+// SESSION FIXES #7-9 (2026-05-19, displacement canon-mirror audit):
+//   Audit of Pine displacement vs en1gma/console/detection/ra_engine/detectors/
+//   displacement.py surfaced three logic drift items. Per
+//   docs/canonical/DETECTION_PRIMITIVES_INDEX.md "CODE WINS" rule:
+//
+//   #7 allow_weak_override knob removed. Canon (displacement.py:337) gates
+//      decisive override on `grade is None` (atr<1.25) ONLY. Pine had added a
+//      toggle to permit override on WEAK grade (atr 1.25-1.5) under Daily-loose
+//      preset. Canon does not have this knob → remove. If Olya wants WEAK-grade
+//      override as methodology, it lands as a separate V005 canon amendment.
+//
+//   #8 cluster-2 net_efficiency denominator corrected. Canon
+//      (displacement.py:158) uses body / (r0 + r1) (SUM of individual ranges).
+//      Pine was using body / combined_range (max-min), which is a smaller
+//      denominator and therefore a LOOSER gate. Fix: divide by
+//      (prior_range + candle_range).
+//
+//   #9 evaluation precedence canon-mirrored. Canon order
+//      (displacement.py:280-353): cluster_2 → single_atr → single_override.
+//      Pine was OR-flat with cluster suppressed by single (`not qualifies_and
+//      AND not prior_qualifies_and`). Fix: cluster checked first WITHOUT
+//      single-suppression; single suppressed when cluster fires; override
+//      fires only when not cluster AND grade is None.
+//
+// SESSION FIXES #10-11 (2026-05-19, MSS confirmation window canon-mirror):
+//   #10 MSS +1 lookahead added. Canon HTF mss.py:42-63 confirmation_window_bars=1
+//      searches displacement in [break_idx-1, break_idx, break_idx+1] — i.e. canon
+//      ALSO accepts displacement on the bar AFTER the swing break. Pine was only
+//      checking [break_idx-1, break_idx] (current bar + 1 back). Fix: add pending-
+//      break state — when close > recent_sh but no immediate disp, mark pending;
+//      if next bar fires disp in correct direction, retroactively emit MSS at the
+//      break bar. 1-bar lookahead = canon HTF confirmation_window_bars=1.
+//      Tradeoff: MSS labels render 1 day later in real-time (canon-faithful, was
+//      previously documented as "1-day late fire" tradeoff).
+//
+//   #11 swing consumption tightened to canon. Pre-fix Pine marked SH as broken
+//      on ANY `close > recent_sh` regardless of whether MSS actually fired
+//      (display-only "broken" state, would block future retries). Canon
+//      (mss.py:267) only adds to broken_swings when confirmed_disp is found
+//      (i.e., MSS actually fires). Fix: only set unc_sh_broken when MSS fires.
+//      Without this, Fix #10's pending lookahead would find an already-broken
+//      SH and refuse to confirm.
+//
 // OPEN QUESTION (carry into next session):
 //   Olya identifies missing-MSS at Jun 11 / Jun 12 / Oct 30 / Dec 10 / Dec 22
 //   (2025) — canonical HTF displacement gates (atr_mult 1.5 / body 0.6 / close
@@ -55,14 +98,13 @@ i_flip_mode         = input.string("C_HYBRID", "Direction-flip rule mode", optio
 i_atr_length        = input.int(14,    "ATR length", group="Calibration", minval=1, tooltip="ATR period used by displacement gates. Canonical = 14.")
 i_use_suppression   = input.bool(true, "MSS impulse suppression", group="Calibration", tooltip="Canonical mss.py:215-251. Suppresses same-direction MSS until retrace >= max(5p, 0.25*ATR), opposite-disp, or new forex day. No-op on Daily (new_day_reset=true clears every bar).")
 
-i_loose_preset      = input.bool(false, "Daily-loose preset (override gates)", group="Displacement gates (LIVE)", tooltip="When ON, overrides the sliders below with Olya-tuned looser values: atr_mult=1.25, body_ratio=0.55, close_gate=0.35, override_body=0.65, override_close=0.15, allow_weak_override=true. Use to catch Olya's missing-MSS cases (Jun 11, Jun 12, Oct 30, Dec 10, Dec 22 2025). When OFF, slider values are used directly.")
+i_loose_preset      = input.bool(false, "Daily-loose preset (override gates)", group="Displacement gates (LIVE)", tooltip="When ON, overrides the sliders below with Olya-tuned looser values: atr_mult=1.25, body_ratio=0.55, close_gate=0.35, override_body=0.65, override_close=0.15. Use to calibrate Daily HTF gates. When OFF, slider values are used directly. NOTE: override path is canon-locked to grade-None bars (atr_ratio<1.25) per displacement.py:337; WEAK-grade override is non-canon and would require V005 canon amendment.")
 i_atr_mult          = input.float(1.5,  "atr_multiplier (AND gate)", group="Displacement gates (LIVE)", minval=0.5, maxval=3.0, step=0.05, tooltip="Min ATR ratio (range/ATR) for 'and' MSS gate. Canonical HTF = 1.5. Loose preset = 1.25.")
 i_body_ratio        = input.float(0.6,  "body_ratio (AND gate)", group="Displacement gates (LIVE)", minval=0.3, maxval=0.9, step=0.05, tooltip="Min body/range ratio for 'and' MSS gate. Canonical HTF = 0.6. Loose preset = 0.55.")
 i_close_gate        = input.float(0.25, "close_gate (max % from extreme)", group="Displacement gates (LIVE)", minval=0.05, maxval=0.5, step=0.05, tooltip="Max distance of close from directional extreme as % of range. Canonical HTF = 0.25 (close in top/bottom 25%). Loose preset = 0.35.")
 i_override_body     = input.float(0.75, "decisive_override body_min", group="Displacement gates (LIVE)", minval=0.5, maxval=0.95, step=0.05, tooltip="Min body_ratio for decisive override path. Canonical = 0.75. Loose preset = 0.65.")
 i_override_close    = input.float(0.10, "decisive_override close_max", group="Displacement gates (LIVE)", minval=0.0, maxval=0.3, step=0.05, tooltip="Max distance from extreme for decisive override. Canonical = 0.10 (close in extreme 10%). Loose preset = 0.15.")
 i_override_pip      = input.float(20.0, "decisive_override pip_floor (1D)", group="Displacement gates (LIVE)", minval=0, step=1.0, tooltip="Min range in pips for decisive override. Canonical 1D = 20.0.")
-i_override_allow_weak = input.bool(false, "Allow override on WEAK grade", group="Displacement gates (LIVE)", tooltip="Canonical: override only fires when bar has NO grade (atr<1.25). When ON, allows override path on WEAK grade (atr 1.25-1.5). Major lever for catching Olya's missing-MSS cases on Daily.")
 
 i_show_swings       = input.bool(true,  "Show swing points",         group="Layer toggles", tooltip="Swing crosses + date/height labels.")
 i_show_displacement = input.bool(true,  "Show displacement",         group="Layer toggles", tooltip="Yellow dots for MSS-qualifying displacements (bright=STRONG, faded=VALID/override/cluster).")
@@ -79,7 +121,6 @@ eff_body_ratio     = i_loose_preset ? 0.55 : i_body_ratio
 eff_close_gate     = i_loose_preset ? 0.35 : i_close_gate
 eff_override_body  = i_loose_preset ? 0.65 : i_override_body
 eff_override_close = i_loose_preset ? 0.15 : i_override_close
-eff_allow_weak_override = i_loose_preset ? true : i_override_allow_weak
 
 // =============================================================================
 // swing_points — canonical en1gma (swing_points.py)
@@ -182,32 +223,27 @@ close_loc_pass = (disp_dir > 0 and close_loc >= (1 - eff_close_gate)) or (disp_d
 
 string single_grade = atr_ratio >= 2.0 ? "STRONG" : atr_ratio >= 1.5 ? "VALID" : atr_ratio >= 1.25 ? "WEAK" : ""
 
-qualifies_and = atr_ratio >= eff_atr_mult and body_ratio >= eff_body_ratio and close_loc_pass
-
-override_grade_ok = single_grade == "" or (eff_allow_weak_override and single_grade == "WEAK")
-override_pip_pass = range_pips >= i_override_pip
-decisive_override_bull = disp_dir > 0 and override_grade_ok and body_ratio >= eff_override_body and close_loc >= (1 - eff_override_close) and override_pip_pass
-decisive_override_bear = disp_dir < 0 and override_grade_ok and body_ratio >= eff_override_body and close_loc <= eff_override_close and override_pip_pass
-decisive_override = decisive_override_bull or decisive_override_bear
-
-string effective_grade = decisive_override ? "VALID" : single_grade
-
-prior_high = high[1]
-prior_low = low[1]
+// ─── Cluster-2 candidate evaluation (canon-mirror: checked FIRST, takes precedence over single) ───
+prior_high  = high[1]
+prior_low   = low[1]
 prior_range = prior_high - prior_low
 
-same_dir_bull  = close > open and close[1] > open[1]
-same_dir_bear  = close < open and close[1] < open[1]
+same_dir_bull = close > open and close[1] > open[1]
+same_dir_bear = close < open and close[1] < open[1]
 
 cluster_prog_bull = same_dir_bull and high > prior_high and low >= prior_low
 cluster_prog_bear = same_dir_bear and low < prior_low and high <= prior_high
 
-two_bar_high   = math.max(high, prior_high)
-two_bar_low    = math.min(low, prior_low)
-two_bar_range  = two_bar_high - two_bar_low
-two_bar_net    = math.abs(close - open[1])
-two_bar_eff    = two_bar_range > 0 ? two_bar_net / two_bar_range : 0.0
-two_bar_atr_r  = atr_val > 0 ? two_bar_range / atr_val : 0.0
+two_bar_high  = math.max(high, prior_high)
+two_bar_low   = math.min(low, prior_low)
+two_bar_range = two_bar_high - two_bar_low
+two_bar_net   = math.abs(close - open[1])
+// FIX #8 canon-mirror: net_efficiency uses SUM of individual ranges as denominator
+// (displacement.py:158 — net_eff = abs(c1 - o0) / (r0 + r1)). Pre-fix Pine divided
+// by combined max-min range (smaller denominator → looser gate than canon).
+two_bar_ranges_sum = candle_range + prior_range
+two_bar_eff   = two_bar_ranges_sum > 0 ? two_bar_net / two_bar_ranges_sum : 0.0
+two_bar_atr_r = atr_val > 0 ? two_bar_range / atr_val : 0.0
 
 cluster_overlap_top = math.min(high, prior_high)
 cluster_overlap_bot = math.max(low, prior_low)
@@ -218,11 +254,34 @@ cluster_overlap_ok  = cluster_overlap_r <= 0.35
 
 cluster_close_ok = close_loc_pass
 
-prior_qualifies_and = qualifies_and[1]
-cluster_bull = cluster_prog_bull and two_bar_atr_r >= eff_atr_mult and two_bar_eff >= 0.65 and cluster_overlap_ok and cluster_close_ok and not qualifies_and and not prior_qualifies_and
-cluster_bear = cluster_prog_bear and two_bar_atr_r >= eff_atr_mult and two_bar_eff >= 0.65 and cluster_overlap_ok and cluster_close_ok and not qualifies_and and not prior_qualifies_and
+// FIX #9 canon-mirror: cluster evaluated WITHOUT single-bar suppression. Canon
+// (displacement.py:280-318) checks cluster first; single bar is skipped on bars
+// consumed by cluster. Pre-fix Pine had `and not qualifies_and and not
+// prior_qualifies_and` here — that inverted the precedence (single beat cluster).
+cluster_bull = cluster_prog_bull and two_bar_atr_r >= eff_atr_mult and two_bar_eff >= 0.65 and cluster_overlap_ok and cluster_close_ok
+cluster_bear = cluster_prog_bear and two_bar_atr_r >= eff_atr_mult and two_bar_eff >= 0.65 and cluster_overlap_ok and cluster_close_ok
+cluster_fired = cluster_bull or cluster_bear
 
-disp_mss_qualified = qualifies_and or decisive_override or cluster_bull or cluster_bear
+// Cluster's quality grade (canon: grade is computed from used_atr; for cluster, used_atr = combined atr_multiple)
+string cluster_grade = two_bar_atr_r >= 2.0 ? "STRONG" : two_bar_atr_r >= 1.5 ? "VALID" : two_bar_atr_r >= 1.25 ? "WEAK" : ""
+
+// ─── Single-bar AND-gate (canon: evaluated only when not consumed by cluster) ───
+qualifies_and_raw = atr_ratio >= eff_atr_mult and body_ratio >= eff_body_ratio and close_loc_pass
+qualifies_and = qualifies_and_raw and not cluster_fired
+
+// ─── Decisive override (canon displacement.py:337 — SINGLE bars with grade is None ONLY) ───
+// FIX #7 canon-mirror: removed `allow_weak_override` knob. Canon gates strictly
+// on `grade is None` (atr_ratio < 1.25). Pre-fix Pine had a toggle that allowed
+// override on WEAK grade — non-canon Pine addition.
+override_grade_ok = single_grade == ""
+override_pip_pass = range_pips >= i_override_pip
+decisive_override_bull = disp_dir > 0 and override_grade_ok and body_ratio >= eff_override_body and close_loc >= (1 - eff_override_close) and override_pip_pass
+decisive_override_bear = disp_dir < 0 and override_grade_ok and body_ratio >= eff_override_body and close_loc <= eff_override_close and override_pip_pass
+decisive_override = (decisive_override_bull or decisive_override_bear) and not cluster_fired
+
+string effective_grade = cluster_fired ? cluster_grade : decisive_override ? "VALID" : single_grade
+
+disp_mss_qualified = qualifies_and or decisive_override or cluster_fired
 
 disp_is_strong = effective_grade == "STRONG" and qualifies_and
 disp_is_other_qualified = disp_mss_qualified and not disp_is_strong
@@ -265,6 +324,17 @@ mss_disp_bull = disp_mss_qualified and disp_dir > 0
 mss_disp_bear = disp_mss_qualified and disp_dir < 0
 mss_bull_disp_ok = mss_disp_bull or mss_disp_bull[1]
 mss_bear_disp_ok = mss_disp_bear or mss_disp_bear[1]
+
+// FIX #10: pending-break state for +1 lookahead (canon HTF confirmation_window_bars=1)
+// Tracks bars where close crossed an unbroken swing but no immediate disp confirmed.
+// At the next bar, if disp fires in matching direction, retroactively emit MSS at the
+// pending bar. Pending expires unconditionally after 1 bar (canon HTF window=1).
+var bool pending_bull_break = false
+var int  pending_bull_break_bar = na
+var int  pending_bull_break_sh_idx = na
+var bool pending_bear_break = false
+var int  pending_bear_break_bar = na
+var int  pending_bear_break_sl_idx = na
 
 var int   sup_dir       = 0
 var float sup_extreme   = na
@@ -320,27 +390,61 @@ if i_use_suppression and sup_dir != 0
 bool mss_bull_fired = false
 bool mss_bear_fired = false
 
+// ─── Step 1 (FIX #10): try to confirm PENDING break from prior bar with current bar's displacement ───
+if pending_bull_break and not sup_skip_bull and mss_disp_bull
+    mss_bull_fired := true
+    array.set(unc_sh_broken, pending_bull_break_sh_idx, true)
+    if i_show_mss
+        // Label at PREVIOUS bar (where the break happened) — high[1] = prior bar's high
+        label.new(chart.point.from_index(pending_bull_break_bar, high[1]), text="MSS up", style=label.style_label_down, color=color.new(color.lime, 0), textcolor=color.black, size=size.small)
+
+if pending_bear_break and not sup_skip_bear and mss_disp_bear
+    mss_bear_fired := true
+    array.set(unc_sl_broken, pending_bear_break_sl_idx, true)
+    if i_show_mss
+        label.new(chart.point.from_index(pending_bear_break_bar, low[1]), text="MSS dn", style=label.style_label_up, color=color.new(color.red, 0), textcolor=color.white, size=size.small)
+
+// Pending expires unconditionally (1-bar lookahead per canon HTF confirmation_window_bars=1)
+pending_bull_break := false
+pending_bull_break_bar := na
+pending_bull_break_sh_idx := na
+pending_bear_break := false
+pending_bear_break_bar := na
+pending_bear_break_sl_idx := na
+
+// ─── Step 2: immediate MSS check (Pine [i-1, i] window) + set pending for next-bar lookahead if break-without-disp ───
+// FIX #11 canon-mirror: only mark broken when MSS actually fires (mss.py:267)
 if not sup_skip_bull and array.size(unc_sh_price) > 0
     last_sh_idx = array.size(unc_sh_price) - 1
     recent_sh = array.get(unc_sh_price, last_sh_idx)
     sh_already_broken = array.get(unc_sh_broken, last_sh_idx)
     if close > recent_sh and not sh_already_broken
-        array.set(unc_sh_broken, last_sh_idx, true)
         if mss_bull_disp_ok
+            // Immediate fire — disp confirmed on current or prior bar
+            array.set(unc_sh_broken, last_sh_idx, true)
             mss_bull_fired := true
             if i_show_mss
                 label.new(chart.point.from_index(bar_index, high), text="MSS up", style=label.style_label_down, color=color.new(color.lime, 0), textcolor=color.black, size=size.small)
+        else
+            // FIX #10: no immediate disp — set pending for next-bar lookahead
+            pending_bull_break := true
+            pending_bull_break_bar := bar_index
+            pending_bull_break_sh_idx := last_sh_idx
 
 if not sup_skip_bear and array.size(unc_sl_price) > 0
     last_sl_idx = array.size(unc_sl_price) - 1
     recent_sl = array.get(unc_sl_price, last_sl_idx)
     sl_already_broken = array.get(unc_sl_broken, last_sl_idx)
     if close < recent_sl and not sl_already_broken
-        array.set(unc_sl_broken, last_sl_idx, true)
         if mss_bear_disp_ok
+            array.set(unc_sl_broken, last_sl_idx, true)
             mss_bear_fired := true
             if i_show_mss
                 label.new(chart.point.from_index(bar_index, low), text="MSS dn", style=label.style_label_up, color=color.new(color.red, 0), textcolor=color.white, size=size.small)
+        else
+            pending_bear_break := true
+            pending_bear_break_bar := bar_index
+            pending_bear_break_sl_idx := last_sl_idx
 
 if mss_bull_fired
     sup_dir := 1

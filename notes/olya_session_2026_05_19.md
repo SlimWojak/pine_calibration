@@ -127,3 +127,106 @@ Per stocktake §5 step_3 and en1gma CLAUDE.md §6:
 - Does NOT promote any FVG/OB/BPR work (§6 standing stop)
 - Does NOT touch M002 NEX Weekly Terrain (separate G-routing decision)
 - Pine session output: 2 LOCKED YAMLs (swing + displacement) handed to V005 sprint when both locked.
+
+---
+
+## EVENING ADDENDUM (2026-05-19) — Canon-mirror audit fixes #7-11 + noise sweep
+
+Triggered by Olya's question: **"why no MSS on May 3/14, Jul 3/11/23 2024?"** Previous-Claude
+hypothesized displacement tuning. This session re-anchored on Olya's "Pine must mirror canon
+LOGIC; params may be tuned to HTF" principle, audited Pine vs canon, ran a noise sweep, and
+identified 5 additional canon-mirror drifts (fixes #7-11) that the prior audit missed.
+
+### Fixes landed (commit at end of evening)
+
+| # | Primitive | Drift | Fix |
+|---|-----------|-------|-----|
+| #7 | displacement | `allow_weak_override` Pine-only knob (canon `displacement.py:337` gates override on grade=None ONLY) | Removed the knob; override now strictly canon-locked to `single_grade == ""` (atr_ratio < 1.25) |
+| #8 | displacement | cluster-2 `net_efficiency` denominator used `combined_range` (max-min); canon `displacement.py:158` uses `(r0 + r1)` (SUM of individual ranges) | Pine now divides by `(prior_range + candle_range)` → gate is canon-tight, no longer artificially loose |
+| #9 | displacement | OR-flat path eval with single suppressing cluster (`not qualifies_and AND not prior_qualifies_and`) | Restructured to canon order: cluster → single → override. Cluster evaluated without suppression; single suppressed when cluster fires; override only when not cluster AND grade=None |
+| #10 | mss | Pine only searched displacement on `[i-1, i]`; canon HTF `mss.py:42-63` window=1 searches `[i-1, i, i+1]` (with +1 lookahead) | Added pending-break state: on close>SH with no immediate disp, mark pending; on next bar if disp fires bull, retroactively emit MSS at the pending bar. 1-bar lookahead = canon HTF `confirmation_window_bars=1` |
+| #11 | mss | Pine marked SH as broken on ANY `close > recent_sh` regardless of MSS firing; canon `mss.py:267` only adds to `broken_swings` when `confirmed_disp` is found | Pine now sets `unc_sh_broken` ONLY when MSS actually fires. Required for fix #10 to work (otherwise pending lookahead would find an already-broken SH) |
+
+### Noise-sweep findings (1Y EUR/USD 2024, 251 bars, 6E=F daily as proxy)
+
+Pure parameter tuning to "catch the 5 anchors" requires unacceptable noise inflation:
+
+| Config | Description | Disp fires/yr | Noise% | Anchors caught |
+|--------|-------------|---------------|--------|----------------|
+| **B1** | Canon HTF locked (atr=1.5/body=0.65/cg=0.25) | **30** | **12.0%** | 0/5 |
+| B2 | Daily-loose preset (current — atr=1.25/body=0.55/cg=0.35) | 68 | 27.1% | 0/5 |
+| S4 | catch-all (atr=1.05/body=0.42/cg=0.55) | 90 | 35.9% | 4/5 |
+| S3 EXP | proposed HTF expansion-bar canon amendment (atr≥1.25 + close-side≥0.5) | 88 | 35.1% | 2/5 |
+
+**Key insight:** Daily-loose preset currently in Pine adds 2.3× canon's noise WITHOUT catching ANY anchors.
+Considered a wasted cost — under canon-mirror logic the slider tuning isn't helping.
+
+### Anchor reclassification post fix #10
+
+Neighborhood analysis (canon-HTF gates, ±5 bars) shows:
+
+| Anchor | Pre-fix-#10 (Pine [i-1, i]) | Post-fix-#10 (canon [i-1, i, i+1]) | Resolution |
+|--------|------------------------------|-------------------------------------|------------|
+| 2024-05-03 | miss | miss | **Park** — no canon-grade disp in ±5 bars |
+| 2024-05-14 | HIT (May 13 OVR-bull) | HIT | Should fire post-fix (TV-side verification needed; data divergence between 6E=F and FOREXCOM possible) |
+| 2024-07-03 | miss | **HIT** (gained — disp at i+1) | Fix #10 catches |
+| 2024-07-11 | miss | **HIT** (gained — disp at i+1) | Fix #10 catches |
+| 2024-07-23 | miss | miss | **Park** — no canon-grade disp in ±5 bars |
+
+**Score:** Pine pre-fix = 1/5. Fix #10 canon-mirror = **3/5**. Remaining 2 (5/3, 7/23) require V003 park
+or V005 canon amendment — not Pine drift; truly outside canonical displacement methodology.
+
+### MSS dependency map (for orientation)
+
+```
+MSS depends on:
+├── swing_points   → LOCKED (N=2) — defines what gets broken
+├── displacement   → REQUIRED — gate (within confirmation window)
+└── fvg            → tag only (NOT a gate)
+
+Tunable per locked_baseline.yaml#mss:
+- displacement_required: true       ← locked methodology (can't disable)
+- close_beyond_swing: true          ← locked methodology
+- confirmation_window_bars: 1 (HTF) ← TUNABLE per TF (LTF=3)
+- structure_close_required: true    ← locked methodology
+- swing_consumption: true           ← locked methodology
+- fvg_tag_only: true                ← tag-only by design
+```
+
+Only `confirmation_window_bars` is a clean per-TF tuning lever. Pine pre-fix had it
+effectively at 0 (lookback only, no lookahead). Post-fix-#10 matches canon's HTF=1.
+**Widening further (to 2/3/5) does NOT help on the 2024 anchors** — neighborhood test shows.
+
+### Realtime tradeoff documentation (Fix #10)
+
+Per canon HTF MSS semantics: when displacement confirms on bar+1, MSS is LABELED at the
+break bar but DETECTED at bar+1. In Pine real-time:
+- Break bar i: pending state set, no label yet
+- Bar i+1: disp fires → MSS label appears at bar i (retroactively)
+
+This is the "MSS fires 1 day late" observation from earlier — now resolved as **canon-faithful
+behavior, not a Pine bug**. Trading signal latency: 1 trading day on these cases. Acceptable
+under V003 ("major moves > micro moves").
+
+### Updated session deliverables
+
+- `pine/htf_map_v1.pine` — fixes #7-11 applied, compiled clean on TV (pine_smart_compile success)
+- `port/daily_displacement_params.yaml` — anchor verdicts updated (TBD verdicts → POST-FIX status)
+- This file — full evening addendum
+- `/tmp/disp_diagnostic.py`, `/tmp/disp_sweep.py`, `/tmp/mss_window_test.py`, `/tmp/may14_debug.py` — investigation harnesses (not in repo)
+
+### Open items for Olya next session
+
+1. **Visual verify Jul 3, Jul 11 2024 NOW show MSS labels** (gained from fix #10)
+2. **Visual verify May 14 2024 MSS** (should appear; if not, FOREXCOM:EURUSD vs 6E=F divergence on May 13)
+3. **Methodology ruling on May 3, Jul 23 2024:**
+   - Option C: Park as "not canonical displacement under HTF" (V003)
+   - Option D: V005+ amendment for a new "extension_bar" primitive that captures wide-range mid-close days
+4. **Decision on Daily-loose preset:** revert to canon HTF (atr=1.5/body=0.65/cg=0.25) since current loose adds 2.3× noise without benefit. Lock displacement YAML at canon values.
+
+### What this session does NOT do (still in force per CLAUDE.md §6)
+
+- No write to `~en1gma/console/detection/locked_baseline.yaml` — V005 sprint scope
+- No FVG/OB/BPR/IFVG/composite PDA work
+- No M002 NEX Weekly Terrain incorporation
+- No methodology change — all fixes are canon-mirror (catching Pine drift, not changing canon)
